@@ -31,8 +31,6 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    # golangci-lint doesn't support Go 1.25 yet, allow failure until tooling catches up
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +44,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
 
   security:
     name: Security Scan
