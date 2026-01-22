@@ -1,6 +1,7 @@
-# Binary (at root level only)
+# Binary
 /vecai
 /vecai.exe
+bin/
 
 # Go
 *.exe

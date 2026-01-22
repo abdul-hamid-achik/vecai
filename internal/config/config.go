@@ -114,7 +114,7 @@ func (c *Config) createDefault() error {
 		return err
 	}
 
-	content := "# vecai configuration\n# See: https://github.com/abdulachik/vecai\n\n" + string(data)
+	content := "# vecai configuration\n# See: https://github.com/abdul-hamid-achik/vecai\n\n" + string(data)
 	return os.WriteFile(path, []byte(content), 0644)
 }
 

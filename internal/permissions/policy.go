@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/abdulachik/vecai/internal/tools"
+	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
 
 // Mode defines the permission checking mode

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/abdulachik/vecai/internal/config"
-	"github.com/abdulachik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/config"
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 )

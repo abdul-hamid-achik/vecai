@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abdulachik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/llm"
 )
 
 const plannerSystemPrompt = `You are a planning assistant. Your job is to help break down complex goals into actionable steps.

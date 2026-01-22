@@ -34,7 +34,7 @@ vecai
 ### From Source
 
 ```bash
-git clone https://github.com/abdulachik/vecai.git
+git clone https://github.com/abdul-hamid-achik/vecai.git
 cd vecai
 go build -o vecai ./cmd/vecai
 

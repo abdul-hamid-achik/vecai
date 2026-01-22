@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abdulachik/vecai/internal/config"
-	"github.com/abdulachik/vecai/internal/llm"
-	"github.com/abdulachik/vecai/internal/permissions"
-	"github.com/abdulachik/vecai/internal/skills"
-	"github.com/abdulachik/vecai/internal/tools"
-	"github.com/abdulachik/vecai/internal/ui"
+	"github.com/abdul-hamid-achik/vecai/internal/config"
+	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/permissions"
+	"github.com/abdul-hamid-achik/vecai/internal/skills"
+	"github.com/abdul-hamid-achik/vecai/internal/tools"
+	"github.com/abdul-hamid-achik/vecai/internal/ui"
 )
 
 // ErrExit is returned when the user requests to exit

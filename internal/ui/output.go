@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/abdulachik/vecai/internal/tools"
+	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
 
 // ANSI color codes
