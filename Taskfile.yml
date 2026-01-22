@@ -1,0 +1,47 @@
+version: '3'
+
+vars:
+  BINARY: vecai
+  VERSION: 0.1.0
+
+tasks:
+  default:
+    desc: Build the project
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -ldflags "-X main.Version={{.VERSION}}" -o {{.BINARY}} ./cmd/vecai
+
+  run:
+    desc: Run the application
+    cmds:
+      - go run ./cmd/vecai {{.CLI_ARGS}}
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f {{.BINARY}}
+
+  install:
+    desc: Install to GOPATH/bin
+    cmds:
+      - go install ./cmd/vecai
+
+  deps:
+    desc: Download dependencies
+    cmds:
+      - go mod download
+      - go mod tidy

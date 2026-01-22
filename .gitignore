@@ -1,0 +1,40 @@
+# Binary (at root level only)
+/vecai
+/vecai.exe
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# vecgrep database (local only)
+.vecgrep/
+
+# Config files with secrets
+vecai.yaml
+.vecai/
+
+# Claude Code local settings
+.claude/
+
+# Test coverage
+coverage.out
+coverage.html
