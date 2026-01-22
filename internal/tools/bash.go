@@ -236,7 +236,7 @@ func (t *GrepTool) fallbackGrep(ctx context.Context, input map[string]any) (stri
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
-	cmd.Run() // Ignore error - grep returns 1 for no matches
+	_ = cmd.Run() // Ignore error - grep returns 1 for no matches
 
 	output := stdout.String()
 	if output == "" {

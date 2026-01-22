@@ -260,9 +260,9 @@ func TestListFilesTool(t *testing.T) {
 
 	// Create temp directory with files
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file1.txt"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(dir, "file2.go"), []byte(""), 0644)
-	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, "file1.txt"), []byte(""), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "file2.go"), []byte(""), 0644)
+	_ = os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
 
 	// Test listing
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -347,7 +347,7 @@ func TestGrepTool(t *testing.T) {
 
 	// Create temp directory with files
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world\nfoo bar\n"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world\nfoo bar\n"), 0644)
 
 	// Test grep (this may use rg or grep depending on system)
 	result, err := tool.Execute(context.Background(), map[string]any{

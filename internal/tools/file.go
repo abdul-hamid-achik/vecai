@@ -241,7 +241,7 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	// Count occurrences
 	count := strings.Count(string(content), oldText)
 	if count > 1 {
-		return "", fmt.Errorf("old_text found %d times, must be unique. Provide more context.", count)
+		return "", fmt.Errorf("old_text found %d times, must be unique; provide more context", count)
 	}
 
 	// Replace
@@ -326,7 +326,7 @@ func (t *ListFilesTool) Execute(ctx context.Context, input map[string]any) (stri
 	var files []string
 
 	if recursive {
-		err = filepath.Walk(absPath, func(p string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(absPath, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil // Skip errors
 			}

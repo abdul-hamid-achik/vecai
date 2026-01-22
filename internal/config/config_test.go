@@ -112,8 +112,8 @@ vecgrep_path: /usr/local/bin/vecgrep
 func TestLoadRequiresAPIKey(t *testing.T) {
 	// Unset API key
 	original := os.Getenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	defer os.Setenv("ANTHROPIC_API_KEY", original)
+	_ = os.Unsetenv("ANTHROPIC_API_KEY")
+	defer func() { _ = os.Setenv("ANTHROPIC_API_KEY", original) }()
 
 	_, err := Load()
 	if err == nil {
@@ -124,8 +124,8 @@ func TestLoadRequiresAPIKey(t *testing.T) {
 func TestLoadWithAPIKey(t *testing.T) {
 	// Set API key
 	original := os.Getenv("ANTHROPIC_API_KEY")
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	defer os.Setenv("ANTHROPIC_API_KEY", original)
+	_ = os.Setenv("ANTHROPIC_API_KEY", "test-key")
+	defer func() { _ = os.Setenv("ANTHROPIC_API_KEY", original) }()
 
 	cfg, err := Load()
 	if err != nil {
