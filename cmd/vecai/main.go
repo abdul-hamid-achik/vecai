@@ -115,8 +115,8 @@ func run() error {
 		return a.Run(query)
 	}
 
-	// Interactive mode
-	return a.RunInteractive()
+	// Interactive mode - use TUI if available, otherwise fall back to line mode
+	return a.RunInteractiveTUI()
 }
 
 func joinArgs(args []string) string {

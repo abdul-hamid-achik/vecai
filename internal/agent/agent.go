@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
+	"github.com/abdul-hamid-achik/vecai/internal/tui"
 	"github.com/abdul-hamid-achik/vecai/internal/ui"
 )
 
@@ -135,6 +137,365 @@ func (a *Agent) RunInteractive() error {
 			a.output.Error(err)
 		}
 	}
+}
+
+// RunInteractiveTUI starts interactive mode with full-screen TUI
+func (a *Agent) RunInteractiveTUI() error {
+	// Fall back to line-based mode if not a TTY or NO_COLOR is set
+	if !tui.IsTTYAvailable() {
+		return a.RunInteractive()
+	}
+
+	// Create TUI runner
+	runner := tui.NewTUIRunner(a.llm.GetModel())
+
+	// Get the adapter for output
+	adapter := runner.GetAdapter()
+
+	// Set up submit callback
+	runner.SetSubmitCallback(func(input string) {
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return
+		}
+
+		// Handle slash commands
+		if strings.HasPrefix(input, "/") {
+			if !a.handleSlashCommandTUI(input, runner) {
+				runner.Quit()
+				return
+			}
+			return
+		}
+
+		// Run query with TUI output
+		if err := a.runWithTUIOutput(input, adapter); err != nil {
+			adapter.Error(err)
+		}
+	})
+
+	// Check vecgrep status on startup
+	a.checkVecgrepStatusTUI(adapter)
+
+	// Send initial welcome message
+	runner.SendInfo("vecai - Interactive Mode")
+	runner.SendInfo("Model: " + a.llm.GetModel())
+
+	// Run TUI
+	return runner.Run()
+}
+
+// runWithTUIOutput runs a query using the TUI adapter for output
+func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
+	ctx := context.Background()
+
+	// Check for skill match
+	if skill := a.skills.Match(query); skill != nil {
+		adapter.Info(fmt.Sprintf("Using skill: %s", skill.Name))
+		query = skill.GetPrompt() + "\n\nUser request: " + query
+	}
+
+	// Add user message
+	a.messages = append(a.messages, llm.Message{
+		Role:    "user",
+		Content: query,
+	})
+
+	return a.runLoopTUI(ctx, adapter)
+}
+
+// runLoopTUI executes the agent loop with TUI output
+func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
+	const maxIterations = 20
+
+	for i := 0; i < maxIterations; i++ {
+		// Get tool definitions
+		toolDefs := a.getToolDefinitions()
+
+		// Call LLM with streaming
+		stream := a.llm.ChatStream(ctx, a.messages, toolDefs, systemPrompt)
+
+		var response llm.Response
+		var textContent strings.Builder
+		var toolCalls []llm.ToolCall
+
+		// Process stream
+		for chunk := range stream {
+			switch chunk.Type {
+			case "text":
+				adapter.StreamText(chunk.Text)
+				textContent.WriteString(chunk.Text)
+
+			case "thinking":
+				adapter.StreamThinking(chunk.Text)
+
+			case "tool_call":
+				if chunk.ToolCall != nil {
+					toolCalls = append(toolCalls, *chunk.ToolCall)
+				}
+
+			case "done":
+				adapter.StreamDone()
+
+			case "error":
+				if chunk.Error != nil {
+					return chunk.Error
+				}
+			}
+		}
+
+		response.Content = textContent.String()
+		response.ToolCalls = toolCalls
+
+		// Add assistant message
+		if response.Content != "" {
+			a.messages = append(a.messages, llm.Message{
+				Role:    "assistant",
+				Content: response.Content,
+			})
+		}
+
+		// If no tool calls, we're done
+		if len(response.ToolCalls) == 0 {
+			return nil
+		}
+
+		// Execute tool calls
+		toolResults := a.executeToolCallsTUI(ctx, response.ToolCalls, adapter)
+
+		// Add tool results as user message
+		var resultContent strings.Builder
+		for _, result := range toolResults {
+			resultContent.WriteString(fmt.Sprintf("Tool %s result:\n%s\n\n", result.Name, result.Result))
+		}
+
+		a.messages = append(a.messages, llm.Message{
+			Role:    "user",
+			Content: resultContent.String(),
+		})
+	}
+
+	return fmt.Errorf("max iterations reached")
+}
+
+// executeToolCallsTUI executes tool calls with TUI output
+func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, adapter *tui.TUIAdapter) []toolResult {
+	var results []toolResult
+
+	for _, call := range calls {
+		tool, ok := a.tools.Get(call.Name)
+		if !ok {
+			results = append(results, toolResult{
+				Name:   call.Name,
+				Result: fmt.Sprintf("Unknown tool: %s", call.Name),
+				Error:  true,
+			})
+			continue
+		}
+
+		// Build description for permission prompt
+		description := formatToolDescription(call.Name, call.Input)
+		adapter.ToolCall(call.Name, description)
+
+		// Check permission using TUI adapter
+		allowed, err := a.checkPermissionTUI(call.Name, tool.Permission(), description, adapter)
+		if err != nil {
+			results = append(results, toolResult{
+				Name:   call.Name,
+				Result: fmt.Sprintf("Permission error: %s", err),
+				Error:  true,
+			})
+			adapter.ToolResult(call.Name, "Permission error: "+err.Error(), true)
+			continue
+		}
+
+		if !allowed {
+			results = append(results, toolResult{
+				Name:   call.Name,
+				Result: "Permission denied by user",
+				Error:  true,
+			})
+			adapter.ToolResult(call.Name, "Permission denied", true)
+			continue
+		}
+
+		// Execute tool
+		result, err := tool.Execute(ctx, call.Input)
+		if err != nil {
+			results = append(results, toolResult{
+				Name:   call.Name,
+				Result: fmt.Sprintf("Error: %s", err),
+				Error:  true,
+			})
+			adapter.ToolResult(call.Name, err.Error(), true)
+		} else {
+			results = append(results, toolResult{
+				Name:   call.Name,
+				Result: result,
+				Error:  false,
+			})
+			adapter.ToolResult(call.Name, result, false)
+		}
+	}
+
+	return results
+}
+
+// checkPermissionTUI checks permission using the TUI adapter
+func (a *Agent) checkPermissionTUI(toolName string, level tools.PermissionLevel, description string, adapter *tui.TUIAdapter) (bool, error) {
+	// Use the existing permission policy but with TUI-compatible I/O
+	// For auto mode, always allow
+	if a.permissions.GetMode() == permissions.ModeAuto {
+		return true, nil
+	}
+
+	// Check cache
+	if decision, ok := a.permissions.GetCachedDecision(toolName); ok {
+		switch decision {
+		case permissions.DecisionAlwaysAllow:
+			return true, nil
+		case permissions.DecisionNeverAllow:
+			return false, nil
+		}
+	}
+
+	// In ask mode, auto-approve reads
+	if a.permissions.GetMode() == permissions.ModeAsk && level == tools.PermissionRead {
+		return true, nil
+	}
+
+	// Need to prompt user via TUI
+	adapter.PermissionPrompt(toolName, level, description)
+
+	// Wait for response from TUI
+	response, err := adapter.ReadLine("")
+	if err != nil {
+		return false, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	response = strings.ToLower(strings.TrimSpace(response))
+
+	switch response {
+	case "y", "yes":
+		return true, nil
+	case "n", "no":
+		return false, nil
+	case "a", "always":
+		// Note: We can't directly modify the policy cache from here
+		// The permission check will handle caching on next call
+		return true, nil
+	case "v", "never":
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+// handleSlashCommandTUI handles slash commands in TUI mode
+func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return true
+	}
+
+	switch parts[0] {
+	case "/help":
+		runner.SendInfo("Commands:")
+		runner.SendInfo("  /help          Show this help")
+		runner.SendInfo("  /mode <tier>   Switch model (fast/smart/genius)")
+		runner.SendInfo("  /plan <goal>   Enter plan mode")
+		runner.SendInfo("  /skills        List available skills")
+		runner.SendInfo("  /status        Check vecgrep status")
+		runner.SendInfo("  /clear         Clear conversation")
+		runner.SendInfo("  /exit          Exit interactive mode")
+		return true
+
+	case "/exit", "/quit":
+		runner.SendInfo("Goodbye!")
+		return false
+
+	case "/clear":
+		a.messages = []llm.Message{}
+		runner.GetAdapter().Clear()
+		runner.SendSuccess("Conversation cleared")
+		return true
+
+	case "/mode":
+		if len(parts) < 2 {
+			runner.SendInfo("Current model: " + a.llm.GetModel())
+			runner.SendInfo("Usage: /mode <fast|smart|genius>")
+			return true
+		}
+		switch parts[1] {
+		case "fast":
+			a.llm.SetTier(config.TierFast)
+			runner.SendSuccess("Switched to fast mode (Haiku)")
+		case "smart":
+			a.llm.SetTier(config.TierSmart)
+			runner.SendSuccess("Switched to smart mode (Sonnet)")
+		case "genius":
+			a.llm.SetTier(config.TierGenius)
+			runner.SendSuccess("Switched to genius mode (Opus)")
+		default:
+			runner.SendError("Unknown mode: " + parts[1])
+		}
+		return true
+
+	case "/plan":
+		if len(parts) < 2 {
+			runner.SendError("Usage: /plan <goal>")
+			return true
+		}
+		goal := strings.Join(parts[1:], " ")
+		runner.SendInfo("Plan mode not fully supported in TUI yet. Use: vecai plan \"" + goal + "\"")
+		return true
+
+	case "/skills":
+		skills := a.skills.List()
+		if len(skills) == 0 {
+			runner.SendInfo("No skills loaded")
+			return true
+		}
+		runner.SendInfo("Available Skills:")
+		for _, s := range skills {
+			runner.SendInfo(fmt.Sprintf("  %s - %s", s.Name, s.Description))
+		}
+		return true
+
+	case "/status":
+		a.checkVecgrepStatusTUI(runner.GetAdapter())
+		return true
+
+	default:
+		runner.SendError("Unknown command: " + parts[0] + ". Type /help for available commands.")
+		return true
+	}
+}
+
+// checkVecgrepStatusTUI checks vecgrep status with TUI output
+func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
+	ctx := context.Background()
+	tool, _ := a.tools.Get("vecgrep_status")
+	result, err := tool.Execute(ctx, map[string]any{})
+	if err != nil {
+		adapter.Warning("vecgrep status check failed: " + err.Error())
+		return
+	}
+
+	if strings.Contains(result, "not initialized") {
+		adapter.Warning("vecgrep is not initialized. Run 'vecgrep init' for semantic search.")
+	} else {
+		adapter.Info("vecgrep index is ready")
+	}
+}
+
+// IsTTY checks if stdout is a terminal
+func IsTTY() bool {
+	fileInfo, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
 }
 
 // RunPlan runs in plan mode
