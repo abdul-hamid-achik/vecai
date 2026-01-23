@@ -113,8 +113,17 @@ func New(cfg Config) *Agent {
 	return a
 }
 
-// Run executes a single query
+// Run executes a single query (uses TUI if available, otherwise line-based)
 func (a *Agent) Run(query string) error {
+	// Use TUI if available for consistent experience
+	if tui.IsTTYAvailable() {
+		return a.RunWithTUI(query)
+	}
+	return a.runLineBased(query)
+}
+
+// runLineBased executes a query with line-based output (non-TUI fallback)
+func (a *Agent) runLineBased(query string) error {
 	ctx := context.Background()
 
 	// Check for skill match
@@ -130,6 +139,42 @@ func (a *Agent) Run(query string) error {
 	})
 
 	return a.runLoop(ctx)
+}
+
+// RunWithTUI executes a single query using the TUI for output
+func (a *Agent) RunWithTUI(query string) error {
+	// Create TUI runner
+	runner := tui.NewTUIRunner(a.llm.GetModel())
+	adapter := runner.GetAdapter()
+
+	// Track completion
+	done := make(chan error, 1)
+
+	// Set up submit callback (shouldn't be called for single query, but just in case)
+	runner.SetSubmitCallback(func(input string) {
+		// For single query mode, we don't expect additional input
+	})
+
+	// Run the query in a goroutine
+	go func() {
+		err := a.runWithTUIOutput(query, adapter)
+		done <- err
+		// Signal completion and quit TUI
+		runner.Quit()
+	}()
+
+	// Run TUI - this blocks until quit
+	if err := runner.Run(); err != nil {
+		return err
+	}
+
+	// Return the query result error if any
+	select {
+	case err := <-done:
+		return err
+	default:
+		return nil
+	}
 }
 
 // RunInteractive starts interactive mode
