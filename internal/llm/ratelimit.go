@@ -41,10 +41,24 @@ func (e *TokenEstimator) EstimateMessages(messages []Message) int {
 	return total
 }
 
+// WaitInfo contains information about a rate limit wait
+type WaitInfo struct {
+	Duration    time.Duration // How long to wait
+	Reason      string        // Why we're waiting (e.g., "token bucket cooldown" or "API returned 429")
+	Attempt     int           // Current attempt number (1-based, 0 if not a retry)
+	MaxAttempts int           // Maximum number of attempts (0 if not a retry)
+}
+
+// WaitCallback is called when the client needs to wait due to rate limiting.
+// It should block for the specified duration or until context is cancelled.
+// If nil, the default time.After behavior is used.
+type WaitCallback func(ctx context.Context, info WaitInfo) error
+
 // TokenBucket implements a token bucket rate limiter
 type TokenBucket struct {
-	limiter *rate.Limiter
-	mu      sync.Mutex
+	limiter  *rate.Limiter
+	mu       sync.Mutex
+	onWait   WaitCallback
 }
 
 // NewTokenBucket creates a new token bucket rate limiter
@@ -63,10 +77,18 @@ func NewTokenBucket(tokensPerMinute int) *TokenBucket {
 	}
 }
 
+// SetWaitCallback sets a callback to be invoked when waiting for tokens
+func (tb *TokenBucket) SetWaitCallback(cb WaitCallback) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	tb.onWait = cb
+}
+
 // Wait blocks until the specified number of tokens are available
 func (tb *TokenBucket) Wait(ctx context.Context, tokens int) error {
 	tb.mu.Lock()
-	defer tb.mu.Unlock()
+	onWait := tb.onWait
+	tb.mu.Unlock()
 
 	// Reserve tokens
 	reservation := tb.limiter.ReserveN(time.Now(), tokens)
@@ -78,6 +100,21 @@ func (tb *TokenBucket) Wait(ctx context.Context, tokens int) error {
 	delay := reservation.Delay()
 	if delay > 0 {
 		logger.Debug("Rate limit: waiting %v for %d tokens", delay, tokens)
+
+		// Use callback if available
+		if onWait != nil {
+			err := onWait(ctx, WaitInfo{
+				Duration: delay,
+				Reason:   "token bucket cooldown",
+			})
+			if err != nil {
+				reservation.Cancel()
+				return err
+			}
+			return nil
+		}
+
+		// Default behavior: simple time.After
 		select {
 		case <-time.After(delay):
 			return nil
@@ -96,6 +133,7 @@ type RateLimitedClient struct {
 	tokenBucket *TokenBucket
 	estimator   *TokenEstimator
 	cfg         *config.RateLimitConfig
+	onWait      WaitCallback
 }
 
 // NewRateLimitedClient creates a new rate-limited client wrapper
@@ -106,6 +144,13 @@ func NewRateLimitedClient(client *Client, cfg *config.RateLimitConfig) *RateLimi
 		estimator:   NewTokenEstimator(),
 		cfg:         cfg,
 	}
+}
+
+// SetWaitCallback sets a callback to be invoked when waiting due to rate limiting.
+// The callback is called both for token bucket waits and API 429 retry waits.
+func (c *RateLimitedClient) SetWaitCallback(cb WaitCallback) {
+	c.onWait = cb
+	c.tokenBucket.SetWaitCallback(cb)
 }
 
 // Chat sends a message with rate limiting and returns the response
@@ -129,10 +174,24 @@ func (c *RateLimitedClient) Chat(ctx context.Context, messages []Message, tools 
 		if attempt > 0 {
 			delay := c.calculateBackoff(attempt)
 			logger.Debug("Rate limit: retry %d/%d, waiting %v", attempt, c.cfg.MaxRetries, delay)
-			select {
-			case <-time.After(delay):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+
+			// Use callback if available
+			if c.onWait != nil {
+				err := c.onWait(ctx, WaitInfo{
+					Duration:    delay,
+					Reason:      "API returned 429",
+					Attempt:     attempt,
+					MaxAttempts: c.cfg.MaxRetries,
+				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 			}
 		}
 
@@ -180,11 +239,26 @@ func (c *RateLimitedClient) ChatStream(ctx context.Context, messages []Message, 
 			if attempt > 0 {
 				delay := c.calculateBackoff(attempt)
 				logger.Debug("Rate limit: stream retry %d/%d, waiting %v", attempt, c.cfg.MaxRetries, delay)
-				select {
-				case <-time.After(delay):
-				case <-ctx.Done():
-					ch <- StreamChunk{Type: "error", Error: ctx.Err()}
-					return
+
+				// Use callback if available
+				if c.onWait != nil {
+					err := c.onWait(ctx, WaitInfo{
+						Duration:    delay,
+						Reason:      "API returned 429",
+						Attempt:     attempt,
+						MaxAttempts: c.cfg.MaxRetries,
+					})
+					if err != nil {
+						ch <- StreamChunk{Type: "error", Error: err}
+						return
+					}
+				} else {
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						ch <- StreamChunk{Type: "error", Error: ctx.Err()}
+						return
+					}
 				}
 			}
 

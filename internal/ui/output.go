@@ -36,6 +36,12 @@ const (
 	BgWhite   = "\033[47m"
 )
 
+// ANSI cursor control codes
+const (
+	CursorStart = "\r"       // Move cursor to start of line
+	ClearLine   = "\033[2K"  // Clear entire line
+)
+
 // OutputHandler handles console output with colors
 type OutputHandler struct {
 	useColors   bool
@@ -67,6 +73,16 @@ func (o *OutputHandler) color(color, text string) string {
 		return text
 	}
 	return color + text + Reset
+}
+
+// IsTTY returns true if the output is a terminal (not piped/redirected)
+func (o *OutputHandler) IsTTY() bool {
+	return o.useColors
+}
+
+// UseColors returns true if colors are enabled
+func (o *OutputHandler) UseColors() bool {
+	return o.useColors
 }
 
 // Text outputs regular text

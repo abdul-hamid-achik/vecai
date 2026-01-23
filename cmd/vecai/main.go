@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -67,7 +68,21 @@ func run() error {
 	// Wrap with rate limiting if enabled
 	var llmClient llm.LLMClient = baseClient
 	if cfg.RateLimit.EnableRateLimiting {
-		llmClient = llm.NewRateLimitedClient(baseClient, &cfg.RateLimit)
+		rateLimitedClient := llm.NewRateLimitedClient(baseClient, &cfg.RateLimit)
+
+		// Set up spinner for rate limit feedback
+		spinner := ui.NewSpinner(output)
+		rateLimitedClient.SetWaitCallback(func(ctx context.Context, info llm.WaitInfo) error {
+			return spinner.Start(ctx, ui.SpinnerConfig{
+				Message:     "Rate limited",
+				Reason:      info.Reason,
+				Duration:    info.Duration,
+				Attempt:     info.Attempt,
+				MaxAttempts: info.MaxAttempts,
+			})
+		})
+
+		llmClient = rateLimitedClient
 	}
 
 	registry := tools.NewRegistry()
