@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
+	"github.com/abdul-hamid-achik/vecai/internal/ui/highlight"
 )
 
 // ANSI color codes
@@ -37,7 +38,8 @@ const (
 
 // OutputHandler handles console output with colors
 type OutputHandler struct {
-	useColors bool
+	useColors   bool
+	highlighter *highlight.Highlighter
 }
 
 // NewOutputHandler creates a new output handler
@@ -54,7 +56,8 @@ func NewOutputHandler() *OutputHandler {
 	}
 
 	return &OutputHandler{
-		useColors: useColors,
+		useColors:   useColors,
+		highlighter: highlight.New(useColors),
 	}
 }
 
@@ -106,6 +109,9 @@ func (o *OutputHandler) ToolResult(name string, result string, isError bool) {
 		if len(result) > maxLen {
 			display = result[:maxLen] + "..."
 		}
+
+		// Apply syntax highlighting to code blocks
+		display = o.highlighter.HighlightMarkdownCodeBlocks(display)
 
 		prefix := o.color(Green, "✓ ")
 		fmt.Println(prefix + o.color(Green, name))
