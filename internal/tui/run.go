@@ -88,10 +88,13 @@ func IsTTYAvailable() bool {
 
 // TUIRunner provides a way to run the TUI with access to the adapter
 type TUIRunner struct {
-	model      *Model
-	program    *tea.Program
-	adapter    *TUIAdapter
-	streamChan chan StreamMsg
+	model        *Model
+	program      *tea.Program
+	adapter      *TUIAdapter
+	streamChan   chan StreamMsg
+	initialQuery string   // Query to execute after TUI is ready
+	onReady      func()   // Callback when TUI is ready
+	interactive  bool     // Whether to stay open for follow-ups
 }
 
 // NewTUIRunner creates a new TUI runner
@@ -125,6 +128,32 @@ func (r *TUIRunner) SetSubmitCallback(fn func(string)) {
 	r.model.SetSubmitCallback(fn)
 }
 
+// SetOnReady sets a callback to be called when the TUI is ready
+func (r *TUIRunner) SetOnReady(fn func()) {
+	r.onReady = fn
+	r.model.SetOnReady(fn)
+}
+
+// SetInitialQuery sets a query to execute after TUI is ready
+func (r *TUIRunner) SetInitialQuery(query string) {
+	r.initialQuery = query
+}
+
+// SetInteractive sets whether to stay open for follow-ups after initial query
+func (r *TUIRunner) SetInteractive(interactive bool) {
+	r.interactive = interactive
+}
+
+// GetReadyChan returns a channel that closes when TUI is ready
+func (r *TUIRunner) GetReadyChan() <-chan struct{} {
+	return r.model.GetReadyChan()
+}
+
+// AddUserBlock adds a user message block to the TUI
+func (r *TUIRunner) AddUserBlock(content string) {
+	r.streamChan <- NewUserMsg(content)
+}
+
 // SendInfo sends an info message to the TUI
 func (r *TUIRunner) SendInfo(msg string) {
 	r.streamChan <- NewInfoMsg(msg)
@@ -148,6 +177,11 @@ func (r *TUIRunner) SendError(msg string) {
 // Quit signals the TUI to quit
 func (r *TUIRunner) Quit() {
 	r.program.Send(QuitMsg{})
+}
+
+// ClearQueue clears all queued inputs
+func (r *TUIRunner) ClearQueue() {
+	r.model.ClearQueue()
 }
 
 // Run starts the TUI and blocks until it exits

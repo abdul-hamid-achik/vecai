@@ -130,6 +130,14 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 		var usage *Usage
 
 		for stream.Next() {
+			// Check for context cancellation
+			select {
+			case <-ctx.Done():
+				ch <- StreamChunk{Type: "error", Error: ctx.Err()}
+				return
+			default:
+			}
+
 			event := stream.Current()
 
 			switch e := event.AsAny().(type) {
@@ -184,7 +192,10 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 		}
 
 		if err := stream.Err(); err != nil {
-			logger.Error("ChatStream: stream error: %v", err)
+			// Don't log context cancellation as an error
+			if ctx.Err() == nil {
+				logger.Error("ChatStream: stream error: %v", err)
+			}
 			ch <- StreamChunk{Type: "error", Error: err}
 		}
 	}()

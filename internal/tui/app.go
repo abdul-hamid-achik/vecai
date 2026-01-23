@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -33,6 +34,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport = viewport.New(m.width, viewportHeight)
 			m.textInput.Width = m.width - 4
 			m.ready = true
+			m.state = StateIdle
+			m.spinnerActive = false
+
+			// Signal ready and start stream listener
+			return m, tea.Batch(m.waitForStream(), m.signalReady())
 		} else {
 			m.viewport.Width = m.width
 			m.viewport.Height = viewportHeight
@@ -106,15 +112,22 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle normal input state
 	switch msg.Type {
 	case tea.KeyEnter:
-		if m.state == StateIdle {
-			input := m.textInput.Value()
-			if input == "" {
-				return m, nil
+		input := m.textInput.Value()
+		if input == "" {
+			return m, nil
+		}
+		m.textInput.Reset()
+
+		// Slash commands execute immediately (bypass queue)
+		if strings.HasPrefix(input, "/") {
+			if m.onSubmit != nil {
+				go m.onSubmit(input)
 			}
+			return m, nil
+		}
 
-			// Clear input
-			m.textInput.Reset()
-
+		// If idle, execute immediately
+		if m.state == StateIdle {
 			// Add user message to blocks
 			m.AddBlock(ContentBlock{
 				Type:    BlockUser,
@@ -134,6 +147,17 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
 		}
+
+		// If busy (streaming or rate limited), queue the input
+		if m.state == StateStreaming || m.state == StateRateLimited {
+			if !m.QueueInput(input) {
+				m.AddBlock(ContentBlock{Type: BlockWarning, Content: "Queue full (max 10)"})
+				return m, nil
+			}
+			m.AddBlock(ContentBlock{Type: BlockUser, Content: input + " (queued)"})
+			return m, nil
+		}
+
 		return m, nil
 
 	case tea.KeyEsc:
@@ -196,6 +220,20 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			m.inputTokens += msg.Usage.InputTokens
 			m.outputTokens += msg.Usage.OutputTokens
 		}
+
+		// Process next queued input if any
+		if nextInput, ok := m.DequeueInput(); ok {
+			m.AddBlock(ContentBlock{Type: BlockUser, Content: nextInput})
+			m.activityMessage = "Processing..."
+			m.loopIteration = 0
+			m.loopStartTime = time.Now()
+			if m.onSubmit != nil {
+				go m.onSubmit(nextInput)
+			}
+			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
+		}
+
+		// No more queued - return to idle
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
@@ -257,6 +295,20 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			Type:    BlockError,
 			Content: msg.Text,
 		})
+
+		// Process next queued input if any (continue despite error)
+		if nextInput, ok := m.DequeueInput(); ok {
+			m.AddBlock(ContentBlock{Type: BlockUser, Content: nextInput})
+			m.activityMessage = "Processing..."
+			m.loopIteration = 0
+			m.loopStartTime = time.Now()
+			if m.onSubmit != nil {
+				go m.onSubmit(nextInput)
+			}
+			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
+		}
+
+		// No more queued - return to idle
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""

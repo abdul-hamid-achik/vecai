@@ -11,7 +11,7 @@ import (
 // View renders the entire TUI
 func (m Model) View() string {
 	if !m.ready {
-		return "Initializing..."
+		return m.renderStartupView()
 	}
 
 	if m.quitting {
@@ -91,13 +91,8 @@ func (m Model) renderFooter() string {
 	// Input prompt
 	prompt := inputPromptStyle.Render("> ")
 
-	// Build input line (input disabled during streaming or rate limiting)
-	var inputLine string
-	if m.state == StateStreaming || m.state == StateRateLimited {
-		inputLine = prompt + footerStyle.Foreground(dimColor).Render("[input disabled during processing]")
-	} else {
-		inputLine = prompt + m.textInput.View()
-	}
+	// Always show text input - user can type and queue messages
+	inputLine := prompt + m.textInput.View()
 
 	b.WriteString(footerStyle.Width(m.width).Render(inputLine))
 	return b.String()
@@ -166,9 +161,14 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, statsValueStyle.Render(iterStr))
 	}
 
+	// Queue count (only show if items are queued)
+	if queueLen := len(m.inputQueue); queueLen > 0 {
+		parts = append(parts, warningStyle.Render(fmt.Sprintf("%d queued", queueLen)))
+	}
+
 	// Show contextual hint based on state
 	if m.state == StateStreaming || m.state == StateRateLimited {
-		parts = append(parts, statsHintStyle.Render("ESC to stop"))
+		parts = append(parts, statsHintStyle.Render("ESC to stop | Enter to queue"))
 	} else {
 		parts = append(parts, statsHintStyle.Render("/help for commands"))
 	}
@@ -211,6 +211,12 @@ func (m Model) renderPermissionFooter() string {
 		fmt.Sprintf("%s %s - %s [y]es / [n]o / [a]lways / ne[v]er: ",
 			iconWarning, m.permToolName, m.permDescription))
 	return footerStyle.Width(m.width).Render(prompt)
+}
+
+// renderStartupView renders the loading/startup view
+func (m Model) renderStartupView() string {
+	frame := GetSpinnerFrame(m.spinnerFrame)
+	return fmt.Sprintf("\n\n  %s Starting vecai...\n\n", frame)
 }
 
 // renderContent renders all content blocks

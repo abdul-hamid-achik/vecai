@@ -76,8 +76,18 @@ func DefaultConfig() *Config {
 	}
 }
 
+// LoadOptions contains options for loading configuration
+type LoadOptions struct {
+	TokenOverride string // Override API key (from --token flag)
+}
+
 // Load loads configuration from files and environment
 func Load() (*Config, error) {
+	return LoadWithOptions(LoadOptions{})
+}
+
+// LoadWithOptions loads configuration with the given options
+func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	cfg := DefaultConfig()
 
 	// Try to load from config files in priority order
@@ -100,10 +110,15 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Load API key from environment
-	cfg.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+	// Load API key: CLI flag > environment variable
+	if opts.TokenOverride != "" {
+		cfg.APIKey = opts.TokenOverride
+	} else {
+		cfg.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+
 	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required")
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required (or use --token flag)")
 	}
 
 	return cfg, nil

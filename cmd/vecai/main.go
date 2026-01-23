@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/agent"
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -39,8 +40,25 @@ func run() error {
 		return nil
 	}
 
-	// Load configuration
-	cfg, err := config.Load()
+	// Parse --token flag before config load
+	var token string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--token" && i+1 < len(args) {
+			token = args[i+1]
+			args = append(args[:i], args[i+2:]...)
+			break
+		}
+		if strings.HasPrefix(args[i], "--token=") {
+			token = strings.TrimPrefix(args[i], "--token=")
+			args = append(args[:i], args[i+1:]...)
+			break
+		}
+	}
+
+	// Load configuration with token override
+	cfg, err := config.LoadWithOptions(config.LoadOptions{
+		TokenOverride: token,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -141,6 +159,7 @@ Usage:
   vecai help              Show this help
 
 Flags:
+  --token <key>           API key (overrides ANTHROPIC_API_KEY env var)
   --auto                  Auto-approve all tool executions
   --strict                Prompt for all tool executions (including reads)
   -v, --version           Show version
@@ -154,7 +173,7 @@ Interactive Commands:
   /exit                   Exit interactive mode
 
 Environment:
-  ANTHROPIC_API_KEY       Required: Your Anthropic API key
+  ANTHROPIC_API_KEY       API key (can be overridden with --token flag)
 
 Config Files (in priority order):
   ./vecai.yaml

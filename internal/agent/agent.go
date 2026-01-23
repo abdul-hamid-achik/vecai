@@ -117,7 +117,7 @@ func New(cfg Config) *Agent {
 func (a *Agent) Run(query string) error {
 	// Use TUI if available for consistent experience
 	if tui.IsTTYAvailable() {
-		return a.RunWithTUI(query)
+		return a.RunTUI(query, false) // Single query, don't stay open
 	}
 	return a.runLineBased(query)
 }
@@ -141,40 +141,90 @@ func (a *Agent) runLineBased(query string) error {
 	return a.runLoop(ctx)
 }
 
-// RunWithTUI executes a single query using the TUI for output
-func (a *Agent) RunWithTUI(query string) error {
+// RunTUI runs the agent with the TUI interface
+// initialQuery: optional query to execute immediately after TUI is ready
+// interactive: if true, stay open for follow-up queries; if false, quit after initial query
+func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 	// Create TUI runner
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
 
-	// Track completion
+	// Track completion for single-query mode
 	done := make(chan error, 1)
 
-	// Set up submit callback (shouldn't be called for single query, but just in case)
+	// Set up the onReady callback to execute initial query
+	if initialQuery != "" {
+		runner.SetOnReady(func() {
+			go func() {
+				// Add user message block first
+				adapter.Info("> " + initialQuery)
+
+				// Execute the query
+				err := a.runWithTUIOutput(initialQuery, adapter)
+				if err != nil {
+					adapter.Error(err)
+				}
+
+				// If not interactive, quit after query completes
+				if !interactive {
+					done <- err
+					runner.Quit()
+				}
+			}()
+		})
+	}
+
+	// Set up submit callback for follow-up queries
 	runner.SetSubmitCallback(func(input string) {
-		// For single query mode, we don't expect additional input
+		input = strings.TrimSpace(input)
+		if input == "" {
+			adapter.StreamDone() // Reset TUI state for empty input
+			return
+		}
+
+		// Handle slash commands
+		if strings.HasPrefix(input, "/") {
+			if !a.handleSlashCommandTUI(input, runner) {
+				runner.Quit()
+				return
+			}
+			adapter.StreamDone() // Reset TUI state after slash command
+			return
+		}
+
+		// Run query with TUI output
+		if err := a.runWithTUIOutput(input, adapter); err != nil {
+			adapter.Error(err)
+		}
 	})
 
-	// Run the query in a goroutine
-	go func() {
-		err := a.runWithTUIOutput(query, adapter)
-		done <- err
-		// Signal completion and quit TUI
-		runner.Quit()
-	}()
+	// Check vecgrep status on startup (only for interactive mode)
+	if interactive || initialQuery == "" {
+		a.checkVecgrepStatusTUI(adapter)
+	}
+
+	// Send welcome messages (only for interactive mode without initial query)
+	if interactive && initialQuery == "" {
+		runner.SendInfo("vecai - Interactive Mode")
+		runner.SendInfo("Model: " + a.llm.GetModel())
+	}
 
 	// Run TUI - this blocks until quit
 	if err := runner.Run(); err != nil {
 		return err
 	}
 
-	// Return the query result error if any
-	select {
-	case err := <-done:
-		return err
-	default:
-		return nil
+	// For single-query mode, return the query result error if any
+	if !interactive && initialQuery != "" {
+		select {
+		case err := <-done:
+			return err
+		default:
+			return nil
+		}
 	}
+
+	return nil
 }
 
 // RunInteractive starts interactive mode
@@ -219,45 +269,8 @@ func (a *Agent) RunInteractiveTUI() error {
 		return a.RunInteractive()
 	}
 
-	// Create TUI runner
-	runner := tui.NewTUIRunner(a.llm.GetModel())
-
-	// Get the adapter for output
-	adapter := runner.GetAdapter()
-
-	// Set up submit callback
-	runner.SetSubmitCallback(func(input string) {
-		input = strings.TrimSpace(input)
-		if input == "" {
-			adapter.StreamDone() // Reset TUI state for empty input
-			return
-		}
-
-		// Handle slash commands
-		if strings.HasPrefix(input, "/") {
-			if !a.handleSlashCommandTUI(input, runner) {
-				runner.Quit()
-				return
-			}
-			adapter.StreamDone() // Reset TUI state after slash command
-			return
-		}
-
-		// Run query with TUI output
-		if err := a.runWithTUIOutput(input, adapter); err != nil {
-			adapter.Error(err)
-		}
-	})
-
-	// Check vecgrep status on startup
-	a.checkVecgrepStatusTUI(adapter)
-
-	// Send initial welcome message
-	runner.SendInfo("vecai - Interactive Mode")
-	runner.SendInfo("Model: " + a.llm.GetModel())
-
-	// Run TUI
-	return runner.Run()
+	// Use unified TUI method with no initial query, interactive mode
+	return a.RunTUI("", true)
 }
 
 // runWithTUIOutput runs a query using the TUI adapter for output
@@ -295,10 +308,23 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 	loopStartTime := time.Now()
 	interruptChan := adapter.GetInterruptChan()
 
-	for i := 0; i < maxIterations; i++ {
-		// Check for interrupt before starting iteration
+	// Create cancellable context that responds to interrupt
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	// Monitor interrupt channel in goroutine
+	go func() {
 		select {
 		case <-interruptChan:
+			cancelRun()
+		case <-runCtx.Done():
+		}
+	}()
+
+	for i := 0; i < maxIterations; i++ {
+		// Check for interrupt/cancellation before starting iteration
+		select {
+		case <-runCtx.Done():
 			adapter.Warning("Interrupted by user")
 			adapter.StreamDone() // Reset TUI state
 			return nil           // Not an error, user chose to stop
@@ -307,29 +333,30 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 
 		// Send stats update at start of each iteration
 		adapter.UpdateStats(tui.SessionStats{
-			LoopIteration:  i + 1,
-			MaxIterations:  maxIterations,
-			LoopStartTime:  loopStartTime,
+			LoopIteration: i + 1,
+			MaxIterations: maxIterations,
+			LoopStartTime: loopStartTime,
 		})
 
 		// Get tool definitions
 		toolDefs := a.getToolDefinitions()
 
-		// Call LLM with streaming
-		stream := a.llm.ChatStream(ctx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
+		// Call LLM with cancellable context
+		stream := a.llm.ChatStream(runCtx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
 
 		var response llm.Response
 		var textContent strings.Builder
 		var toolCalls []llm.ToolCall
+		interrupted := false
 
 		// Process stream
+	streamLoop:
 		for chunk := range stream {
-			// Check for interrupt during streaming
+			// Check for cancellation during streaming
 			select {
-			case <-interruptChan:
-				adapter.Warning("Interrupted by user")
-				adapter.StreamDone() // Reset TUI state
-				return nil           // Not an error, user chose to stop
+			case <-runCtx.Done():
+				interrupted = true
+				break streamLoop
 			default:
 			}
 
@@ -356,9 +383,21 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 
 			case "error":
 				if chunk.Error != nil {
+					// Check if error is due to context cancellation
+					if runCtx.Err() != nil {
+						interrupted = true
+						break streamLoop
+					}
 					return chunk.Error
 				}
 			}
+		}
+
+		// Handle interruption after stream processing
+		if interrupted {
+			adapter.Warning("Interrupted by user")
+			adapter.StreamDone() // Reset TUI state
+			return nil           // Not an error, user chose to stop
 		}
 
 		response.Content = textContent.String()
@@ -373,7 +412,7 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		}
 
 		// Update context stats after each API call
-		a.updateContextStatsTUI(ctx, adapter)
+		a.updateContextStatsTUI(runCtx, adapter)
 
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
@@ -381,7 +420,7 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		}
 
 		// Execute tool calls
-		toolResults := a.executeToolCallsTUI(ctx, response.ToolCalls, adapter)
+		toolResults := a.executeToolCallsTUI(runCtx, response.ToolCalls, adapter)
 
 		// Add tool results as user message
 		var resultContent strings.Builder
@@ -616,7 +655,8 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		a.contextMgr.Clear()
 		a.shownContextWarning = false
 		runner.GetAdapter().Clear()
-		runner.SendSuccess("Conversation cleared")
+		runner.ClearQueue()
+		runner.SendSuccess("Conversation and queue cleared")
 		return true
 
 	case "/context":
