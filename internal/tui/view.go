@@ -56,6 +56,9 @@ func (m Model) renderHeader() string {
 		status = spinnerStyle.Render(frame + " " + msg)
 	case StatePermission:
 		status = warningStyle.Render("Permission Required")
+	case StateRateLimited:
+		frame := GetSpinnerFrame(m.spinnerFrame)
+		status = warningStyle.Render(frame + " Rate limited")
 	}
 
 	// Calculate spacing
@@ -81,18 +84,16 @@ func (m Model) renderFooter() string {
 
 	var b strings.Builder
 
-	// Add status bar if streaming
-	if m.state == StateStreaming {
-		b.WriteString(m.renderStatusBar())
-		b.WriteString("\n")
-	}
+	// Always show status bar (like Claude Code)
+	b.WriteString(m.renderStatusBar())
+	b.WriteString("\n")
 
 	// Input prompt
 	prompt := inputPromptStyle.Render("> ")
 
-	// Build input line (input disabled during streaming)
+	// Build input line (input disabled during streaming or rate limiting)
 	var inputLine string
-	if m.state == StateStreaming {
+	if m.state == StateStreaming || m.state == StateRateLimited {
 		inputLine = prompt + footerStyle.Foreground(dimColor).Render("[input disabled during processing]")
 	} else {
 		inputLine = prompt + m.textInput.View()
@@ -106,24 +107,37 @@ func (m Model) renderFooter() string {
 func (m Model) renderStatusBar() string {
 	var parts []string
 
-	// Model name
+	// Model name (always show)
 	if m.modelName != "" {
 		parts = append(parts, statsLabelStyle.Render("Model: ")+statsValueStyle.Render(m.modelName))
 	}
 
-	// Current activity (what's happening)
-	if m.activityMessage != "" {
+	// Rate limit info takes priority over activity message
+	if m.rateLimitInfo != nil {
+		remaining := time.Until(m.rateLimitEndTime)
+		if remaining > 0 {
+			rateLimitStr := fmt.Sprintf("⏳ Rate limited: %s", formatDuration(remaining))
+			if m.rateLimitInfo.Reason != "" {
+				rateLimitStr = fmt.Sprintf("⏳ %s: %s", m.rateLimitInfo.Reason, formatDuration(remaining))
+			}
+			if m.rateLimitInfo.Attempt > 0 {
+				rateLimitStr += fmt.Sprintf(" (retry %d/%d)", m.rateLimitInfo.Attempt, m.rateLimitInfo.MaxAttempts)
+			}
+			parts = append(parts, warningStyle.Render(rateLimitStr))
+		}
+	} else if m.activityMessage != "" {
+		// Current activity (what's happening)
 		parts = append(parts, statsValueStyle.Render(m.activityMessage))
 	}
 
-	// Duration - how long this loop has been running
-	if !m.loopStartTime.IsZero() {
+	// Duration - how long this loop has been running (only during active processing)
+	if !m.loopStartTime.IsZero() && m.rateLimitInfo == nil && (m.state == StateStreaming || m.state == StateRateLimited) {
 		elapsed := time.Since(m.loopStartTime)
 		durationStr := formatDuration(elapsed)
 		parts = append(parts, statsValueStyle.Render(durationStr))
 	}
 
-	// Token usage - show accumulated tokens
+	// Token usage - show accumulated tokens (always show if we have any)
 	if m.inputTokens > 0 || m.outputTokens > 0 {
 		tokenStr := fmt.Sprintf("⬆%s ⬇%s",
 			formatTokenCount(m.inputTokens),
@@ -131,14 +145,33 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, statsValueStyle.Render(tokenStr))
 	}
 
-	// Iteration count
-	if m.loopIteration > 0 {
+	// Context usage - show if tracked (color-coded by threshold)
+	if m.contextUsage > 0 {
+		contextStr := fmt.Sprintf("Ctx: %.0f%%", m.contextUsage*100)
+		var style lipgloss.Style
+		switch {
+		case m.contextUsage >= 0.95:
+			style = errorStyle // Red - needs compaction
+		case m.contextUsage >= 0.80:
+			style = warningStyle // Yellow - warning
+		default:
+			style = statsValueStyle // Normal
+		}
+		parts = append(parts, style.Render(contextStr))
+	}
+
+	// Iteration count (only during active processing)
+	if m.loopIteration > 0 && m.rateLimitInfo == nil && (m.state == StateStreaming || m.state == StateRateLimited) {
 		iterStr := fmt.Sprintf("[%d/%d]", m.loopIteration, m.maxIterations)
 		parts = append(parts, statsValueStyle.Render(iterStr))
 	}
 
-	// ESC hint
-	parts = append(parts, statsHintStyle.Render("ESC to stop"))
+	// Show contextual hint based on state
+	if m.state == StateStreaming || m.state == StateRateLimited {
+		parts = append(parts, statsHintStyle.Render("ESC to stop"))
+	} else {
+		parts = append(parts, statsHintStyle.Render("/help for commands"))
+	}
 
 	// Join with separators
 	content := strings.Join(parts, statsLabelStyle.Render(" │ "))

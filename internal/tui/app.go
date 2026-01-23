@@ -23,8 +23,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		// Calculate viewport size (total height minus header and footer)
+		// Header: 1 line, Footer: 2 lines (status bar + input line)
 		headerHeight := 1
-		footerHeight := 1
+		footerHeight := 2
 		viewportHeight := m.height - headerHeight - footerHeight - 2
 
 		if !m.ready {
@@ -75,8 +76,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Handle ESC during streaming - send interrupt signal
-	if msg.Type == tea.KeyEsc && m.state == StateStreaming {
+	// Handle ESC during streaming or rate limiting - send interrupt signal
+	if msg.Type == tea.KeyEsc && (m.state == StateStreaming || m.state == StateRateLimited) {
 		// Non-blocking send to interrupt channel
 		select {
 		case m.interruptChan <- struct{}{}:
@@ -120,12 +121,18 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				Content: input,
 			})
 
+			// Immediately transition to streaming state to prevent double-submit
+			m.state = StateStreaming
+			m.activityMessage = "Processing..."
+			m.loopIteration = 0
+			m.loopStartTime = time.Now()
+
 			// Call submit callback if set
 			if m.onSubmit != nil {
 				go m.onSubmit(input)
 			}
 
-			return m, nil
+			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
 		}
 		return m, nil
 
@@ -192,6 +199,7 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
+		m.textInput.Focus() // Re-enable input for next query
 		m.updateViewportContent()
 		return m, m.waitForStream()
 
@@ -252,6 +260,7 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
+		m.textInput.Focus() // Re-enable input for next query
 		return m, m.waitForStream()
 
 	case "info":
@@ -305,6 +314,30 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			Type:    BlockUser,
 			Content: msg.Text,
 		})
+		return m, m.waitForStream()
+
+	case "rate_limit":
+		if msg.RateLimitInfo != nil {
+			m.rateLimitInfo = msg.RateLimitInfo
+			m.rateLimitEndTime = time.Now().Add(msg.RateLimitInfo.Duration)
+			m.state = StateRateLimited
+			m.activityMessage = "Rate limited"
+			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
+		}
+		return m, m.waitForStream()
+
+	case "rate_limit_clear":
+		m.rateLimitInfo = nil
+		m.state = StateIdle
+		m.activityMessage = ""
+		m.textInput.Focus() // Re-enable input
+		return m, m.waitForStream()
+
+	case "context_stats":
+		if msg.ContextStats != nil {
+			m.contextUsage = msg.ContextStats.UsagePercent
+			m.contextWarn = msg.ContextStats.NeedsWarning
+		}
 		return m, m.waitForStream()
 	}
 

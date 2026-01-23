@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
@@ -209,4 +211,62 @@ func (a *TUIAdapter) Select(prompt string, options []string) (int, error) {
 // Clear clears the conversation
 func (a *TUIAdapter) Clear() {
 	a.streamChan <- NewClearMsg()
+}
+
+// RateLimitStart sends a rate limit notification to the TUI
+func (a *TUIAdapter) RateLimitStart(duration time.Duration, reason string, attempt, maxAttempts int) {
+	a.streamChan <- NewRateLimitMsg(RateLimitInfo{
+		Duration:    duration,
+		Reason:      reason,
+		Attempt:     attempt,
+		MaxAttempts: maxAttempts,
+	})
+}
+
+// RateLimitEnd clears the rate limit status
+func (a *TUIAdapter) RateLimitEnd() {
+	a.streamChan <- NewRateLimitClearMsg()
+}
+
+// UpdateContextStats sends a context stats update to the TUI
+func (a *TUIAdapter) UpdateContextStats(usagePercent float64, usedTokens, contextWindow int, needsWarning bool) {
+	a.streamChan <- NewContextStatsMsg(ContextStatsInfo{
+		UsagePercent:  usagePercent,
+		UsedTokens:    usedTokens,
+		ContextWindow: contextWindow,
+		NeedsWarning:  needsWarning,
+	})
+}
+
+// WaitForRateLimit implements a TUI-compatible wait callback for rate limiting.
+// It sends countdown updates through the TUI channel instead of writing to stderr.
+func (a *TUIAdapter) WaitForRateLimit(ctx context.Context, duration time.Duration, reason string, attempt, maxAttempts int) error {
+	// Send initial rate limit notification
+	a.RateLimitStart(duration, reason, attempt, maxAttempts)
+
+	// Wait with countdown updates
+	endTime := time.Now().Add(duration)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			remaining := time.Until(endTime)
+			if remaining <= 0 {
+				a.RateLimitEnd()
+				return nil
+			}
+			// Update countdown through channel
+			a.streamChan <- NewRateLimitMsg(RateLimitInfo{
+				Duration:    remaining,
+				Reason:      reason,
+				Attempt:     attempt,
+				MaxAttempts: maxAttempts,
+			})
+		case <-ctx.Done():
+			a.RateLimitEnd()
+			return ctx.Err()
+		}
+	}
 }

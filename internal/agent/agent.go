@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
+	ctxmgr "github.com/abdul-hamid-achik/vecai/internal/context"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
@@ -66,12 +67,37 @@ type Agent struct {
 	output      *ui.OutputHandler
 	input       *ui.InputHandler
 	config      *config.Config
-	messages    []llm.Message
+	contextMgr  *ctxmgr.ContextManager
+	compactor   *ctxmgr.Compactor
 	planner     *Planner
+
+	// Track if we've shown the context warning this session
+	shownContextWarning bool
 }
 
 // New creates a new agent
 func New(cfg Config) *Agent {
+	// Build context config from app config
+	ctxConfig := ctxmgr.ContextConfig{
+		AutoCompactThreshold: cfg.Config.Context.AutoCompactThreshold,
+		WarnThreshold:        cfg.Config.Context.WarnThreshold,
+		PreserveLast:         cfg.Config.Context.PreserveLast,
+		EnableAutoCompact:    cfg.Config.Context.EnableAutoCompact,
+		ContextWindow:        cfg.Config.Context.ContextWindow,
+	}
+	if ctxConfig.ContextWindow == 0 {
+		ctxConfig.ContextWindow = ctxmgr.DefaultContextWindow
+	}
+	if ctxConfig.AutoCompactThreshold == 0 {
+		ctxConfig.AutoCompactThreshold = 0.95
+	}
+	if ctxConfig.WarnThreshold == 0 {
+		ctxConfig.WarnThreshold = 0.80
+	}
+	if ctxConfig.PreserveLast == 0 {
+		ctxConfig.PreserveLast = 4
+	}
+
 	a := &Agent{
 		llm:         cfg.LLM,
 		tools:       cfg.Tools,
@@ -80,7 +106,8 @@ func New(cfg Config) *Agent {
 		output:      cfg.Output,
 		input:       cfg.Input,
 		config:      cfg.Config,
-		messages:    []llm.Message{},
+		contextMgr:  ctxmgr.NewContextManager(systemPrompt, ctxConfig),
+		compactor:   ctxmgr.NewCompactor(cfg.LLM),
 	}
 	a.planner = NewPlanner(a)
 	return a
@@ -97,7 +124,7 @@ func (a *Agent) Run(query string) error {
 	}
 
 	// Add user message
-	a.messages = append(a.messages, llm.Message{
+	a.contextMgr.AddMessage(llm.Message{
 		Role:    "user",
 		Content: query,
 	})
@@ -190,6 +217,13 @@ func (a *Agent) RunInteractiveTUI() error {
 func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	ctx := context.Background()
 
+	// Set TUI-aware rate limit callback if client supports it
+	if rlClient, ok := a.llm.(*llm.RateLimitedClient); ok {
+		rlClient.SetWaitCallback(func(ctx context.Context, info llm.WaitInfo) error {
+			return adapter.WaitForRateLimit(ctx, info.Duration, info.Reason, info.Attempt, info.MaxAttempts)
+		})
+	}
+
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
 		adapter.Info(fmt.Sprintf("Using skill: %s", skill.Name))
@@ -197,7 +231,7 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	}
 
 	// Add user message
-	a.messages = append(a.messages, llm.Message{
+	a.contextMgr.AddMessage(llm.Message{
 		Role:    "user",
 		Content: query,
 	})
@@ -218,8 +252,9 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		// Check for interrupt before starting iteration
 		select {
 		case <-interruptChan:
-			adapter.Info("Loop interrupted by user")
-			return ErrInterrupted
+			adapter.Warning("Interrupted by user")
+			adapter.StreamDone() // Reset TUI state
+			return nil           // Not an error, user chose to stop
 		default:
 		}
 
@@ -234,7 +269,7 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		toolDefs := a.getToolDefinitions()
 
 		// Call LLM with streaming
-		stream := a.llm.ChatStream(ctx, a.messages, toolDefs, systemPrompt)
+		stream := a.llm.ChatStream(ctx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
 
 		var response llm.Response
 		var textContent strings.Builder
@@ -245,8 +280,9 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 			// Check for interrupt during streaming
 			select {
 			case <-interruptChan:
-				adapter.Info("Streaming interrupted by user")
-				return ErrInterrupted
+				adapter.Warning("Interrupted by user")
+				adapter.StreamDone() // Reset TUI state
+				return nil           // Not an error, user chose to stop
 			default:
 			}
 
@@ -283,7 +319,7 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 
 		// Add assistant message
 		if response.Content != "" {
-			a.messages = append(a.messages, llm.Message{
+			a.contextMgr.AddMessage(llm.Message{
 				Role:    "assistant",
 				Content: response.Content,
 			})
@@ -291,6 +327,8 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
+			// Update context stats after completion
+			a.updateContextStatsTUI(ctx, adapter)
 			return nil
 		}
 
@@ -303,13 +341,89 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 			resultContent.WriteString(fmt.Sprintf("Tool %s result:\n%s\n\n", result.Name, result.Result))
 		}
 
-		a.messages = append(a.messages, llm.Message{
+		a.contextMgr.AddMessage(llm.Message{
 			Role:    "user",
 			Content: resultContent.String(),
 		})
 	}
 
 	return fmt.Errorf("max iterations reached")
+}
+
+// updateContextStatsTUI updates context stats and handles auto-compact/warnings
+func (a *Agent) updateContextStatsTUI(ctx context.Context, adapter *tui.TUIAdapter) {
+	stats := a.contextMgr.GetStats()
+
+	// Update TUI with context stats
+	adapter.UpdateContextStats(
+		stats.UsagePercent,
+		stats.UsedTokens,
+		stats.ContextWindow,
+		stats.NeedsWarning,
+	)
+
+	// Handle auto-compact at threshold
+	if stats.NeedsCompaction && a.config.Context.EnableAutoCompact {
+		adapter.Warning(fmt.Sprintf("Context at %.0f%% - auto-compacting...", stats.UsagePercent*100))
+		if err := a.autoCompactTUI(ctx, adapter); err != nil {
+			adapter.Warning("Auto-compact failed: " + err.Error())
+		}
+		return
+	}
+
+	// Show warning at threshold (once per high-usage session)
+	if stats.NeedsWarning && !a.shownContextWarning {
+		adapter.Warning(fmt.Sprintf("Context at %.0f%% - consider using /compact", stats.UsagePercent*100))
+		a.shownContextWarning = true
+	}
+}
+
+// autoCompactTUI performs automatic compaction with TUI output
+func (a *Agent) autoCompactTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
+	return a.compactConversation(ctx, "", adapter)
+}
+
+// compactConversation compacts the conversation history
+func (a *Agent) compactConversation(ctx context.Context, focusPrompt string, adapter *tui.TUIAdapter) error {
+	messages := a.contextMgr.GetMessages()
+	if len(messages) == 0 {
+		if adapter != nil {
+			adapter.Info("No conversation to compact")
+		}
+		return nil
+	}
+
+	preserveLast := a.contextMgr.GetPreserveLast()
+
+	result, err := a.compactor.Compact(ctx, ctxmgr.CompactRequest{
+		Messages:     messages,
+		FocusPrompt:  focusPrompt,
+		PreserveLast: preserveLast,
+	})
+	if err != nil {
+		return fmt.Errorf("compaction failed: %w", err)
+	}
+
+	// Replace history with summary
+	a.contextMgr.ReplaceWithSummary(result.Summary, result.PreservedMsgs)
+
+	// Reset warning flag after compaction
+	a.shownContextWarning = false
+
+	// Update TUI with new stats
+	if adapter != nil {
+		newStats := a.contextMgr.GetStats()
+		adapter.UpdateContextStats(
+			newStats.UsagePercent,
+			newStats.UsedTokens,
+			newStats.ContextWindow,
+			newStats.NeedsWarning,
+		)
+		adapter.Success(fmt.Sprintf("Compacted: %d msgs summarized, saved ~%d tokens (now at %.0f%%)",
+			result.MessagesSummarized, result.TokensSaved, newStats.UsagePercent*100))
+	}
+
+	return nil
 }
 
 // executeToolCallsTUI executes tool calls with TUI output
@@ -435,13 +549,15 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 	switch parts[0] {
 	case "/help":
 		runner.SendInfo("Commands:")
-		runner.SendInfo("  /help          Show this help")
-		runner.SendInfo("  /mode <tier>   Switch model (fast/smart/genius)")
-		runner.SendInfo("  /plan <goal>   Enter plan mode")
-		runner.SendInfo("  /skills        List available skills")
-		runner.SendInfo("  /status        Check vecgrep status")
-		runner.SendInfo("  /clear         Clear conversation")
-		runner.SendInfo("  /exit          Exit interactive mode")
+		runner.SendInfo("  /help            Show this help")
+		runner.SendInfo("  /mode <tier>     Switch model (fast/smart/genius)")
+		runner.SendInfo("  /plan <goal>     Enter plan mode")
+		runner.SendInfo("  /skills          List available skills")
+		runner.SendInfo("  /status          Check vecgrep status")
+		runner.SendInfo("  /context         Show context usage breakdown")
+		runner.SendInfo("  /compact [focus] Compact conversation (optional focus)")
+		runner.SendInfo("  /clear           Clear conversation")
+		runner.SendInfo("  /exit            Exit interactive mode")
 		return true
 
 	case "/exit", "/quit":
@@ -449,9 +565,38 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		return false
 
 	case "/clear":
-		a.messages = []llm.Message{}
+		a.contextMgr.Clear()
+		a.shownContextWarning = false
 		runner.GetAdapter().Clear()
 		runner.SendSuccess("Conversation cleared")
+		return true
+
+	case "/context":
+		stats := a.contextMgr.GetStats()
+		breakdown := a.contextMgr.GetBreakdown()
+		runner.SendInfo(fmt.Sprintf("Context: %d/%d tokens (%.1f%%)",
+			stats.UsedTokens, stats.ContextWindow, stats.UsagePercent*100))
+		runner.SendInfo(fmt.Sprintf("  System: %d | User: %d | Assistant: %d | Tools: %d",
+			breakdown.SystemPrompt, breakdown.UserMessages,
+			breakdown.AssistantMsgs, breakdown.ToolResults))
+		runner.SendInfo(fmt.Sprintf("  Messages: %d", stats.MessageCount))
+		if stats.NeedsCompaction {
+			runner.SendWarning("Context needs compaction - use /compact")
+		} else if stats.NeedsWarning {
+			runner.SendWarning("Context is getting full - consider /compact")
+		}
+		return true
+
+	case "/compact":
+		focusPrompt := ""
+		if len(parts) > 1 {
+			focusPrompt = strings.Join(parts[1:], " ")
+		}
+		runner.SendInfo("Compacting conversation...")
+		ctx := context.Background()
+		if err := a.compactConversation(ctx, focusPrompt, runner.GetAdapter()); err != nil {
+			runner.SendError("Compact failed: " + err.Error())
+		}
 		return true
 
 	case "/mode":
@@ -556,9 +701,41 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 		return false // Signal exit
 
 	case "/clear":
-		a.messages = []llm.Message{}
+		a.contextMgr.Clear()
+		a.shownContextWarning = false
 		a.input.Clear()
 		a.output.Success("Conversation cleared")
+		return true
+
+	case "/context":
+		stats := a.contextMgr.GetStats()
+		breakdown := a.contextMgr.GetBreakdown()
+		a.output.TextLn(fmt.Sprintf("Context: %d/%d tokens (%.1f%%)",
+			stats.UsedTokens, stats.ContextWindow, stats.UsagePercent*100))
+		a.output.TextLn(fmt.Sprintf("  System: %d | User: %d | Assistant: %d | Tools: %d",
+			breakdown.SystemPrompt, breakdown.UserMessages,
+			breakdown.AssistantMsgs, breakdown.ToolResults))
+		a.output.TextLn(fmt.Sprintf("  Messages: %d", stats.MessageCount))
+		if stats.NeedsCompaction {
+			a.output.Warning("Context needs compaction - use /compact")
+		} else if stats.NeedsWarning {
+			a.output.Warning("Context is getting full - consider /compact")
+		}
+		return true
+
+	case "/compact":
+		focusPrompt := ""
+		if len(parts) > 1 {
+			focusPrompt = strings.Join(parts[1:], " ")
+		}
+		a.output.Info("Compacting conversation...")
+		ctx := context.Background()
+		if err := a.compactConversation(ctx, focusPrompt, nil); err != nil {
+			a.output.ErrorStr("Compact failed: " + err.Error())
+		} else {
+			newStats := a.contextMgr.GetStats()
+			a.output.Success(fmt.Sprintf("Compacted to %.0f%%", newStats.UsagePercent*100))
+		}
 		return true
 
 	case "/mode":
@@ -617,7 +794,7 @@ func (a *Agent) runLoop(ctx context.Context) error {
 		toolDefs := a.getToolDefinitions()
 
 		// Call LLM with streaming
-		stream := a.llm.ChatStream(ctx, a.messages, toolDefs, systemPrompt)
+		stream := a.llm.ChatStream(ctx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
 
 		var response llm.Response
 		var textContent strings.Builder
@@ -653,7 +830,7 @@ func (a *Agent) runLoop(ctx context.Context) error {
 
 		// Add assistant message
 		if response.Content != "" {
-			a.messages = append(a.messages, llm.Message{
+			a.contextMgr.AddMessage(llm.Message{
 				Role:    "assistant",
 				Content: response.Content,
 			})
@@ -661,6 +838,8 @@ func (a *Agent) runLoop(ctx context.Context) error {
 
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
+			// Check context usage after completion
+			a.checkContextUsage(ctx)
 			return nil
 		}
 
@@ -673,13 +852,36 @@ func (a *Agent) runLoop(ctx context.Context) error {
 			resultContent.WriteString(fmt.Sprintf("Tool %s result:\n%s\n\n", result.Name, result.Result))
 		}
 
-		a.messages = append(a.messages, llm.Message{
+		a.contextMgr.AddMessage(llm.Message{
 			Role:    "user",
 			Content: resultContent.String(),
 		})
 	}
 
 	return fmt.Errorf("max iterations reached")
+}
+
+// checkContextUsage checks context usage and handles warnings/auto-compact for non-TUI mode
+func (a *Agent) checkContextUsage(ctx context.Context) {
+	stats := a.contextMgr.GetStats()
+
+	// Handle auto-compact at threshold
+	if stats.NeedsCompaction && a.config.Context.EnableAutoCompact {
+		a.output.Warning(fmt.Sprintf("Context at %.0f%% - auto-compacting...", stats.UsagePercent*100))
+		if err := a.compactConversation(ctx, "", nil); err != nil {
+			a.output.Warning("Auto-compact failed: " + err.Error())
+		} else {
+			newStats := a.contextMgr.GetStats()
+			a.output.Success(fmt.Sprintf("Compacted to %.0f%%", newStats.UsagePercent*100))
+		}
+		return
+	}
+
+	// Show warning at threshold (once per high-usage session)
+	if stats.NeedsWarning && !a.shownContextWarning {
+		a.output.Warning(fmt.Sprintf("Context at %.0f%% - consider using /compact", stats.UsagePercent*100))
+		a.shownContextWarning = true
+	}
 }
 
 type toolResult struct {
@@ -827,13 +1029,15 @@ func (a *Agent) checkVecgrepStatus() {
 // showHelp displays help information
 func (a *Agent) showHelp() {
 	a.output.Header("Commands")
-	a.output.TextLn("/help          Show this help")
-	a.output.TextLn("/mode <tier>   Switch model (fast/smart/genius)")
-	a.output.TextLn("/plan <goal>   Enter plan mode")
-	a.output.TextLn("/skills        List available skills")
-	a.output.TextLn("/status        Check vecgrep status")
-	a.output.TextLn("/clear         Clear conversation")
-	a.output.TextLn("/exit          Exit interactive mode")
+	a.output.TextLn("/help            Show this help")
+	a.output.TextLn("/mode <tier>     Switch model (fast/smart/genius)")
+	a.output.TextLn("/plan <goal>     Enter plan mode")
+	a.output.TextLn("/skills          List available skills")
+	a.output.TextLn("/status          Check vecgrep status")
+	a.output.TextLn("/context         Show context usage breakdown")
+	a.output.TextLn("/compact [focus] Compact conversation (optional focus prompt)")
+	a.output.TextLn("/clear           Clear conversation")
+	a.output.TextLn("/exit            Exit interactive mode")
 }
 
 // showSkills displays available skills
@@ -855,10 +1059,11 @@ func (a *Agent) showSkills() {
 
 // ClearHistory clears conversation history
 func (a *Agent) ClearHistory() {
-	a.messages = []llm.Message{}
+	a.contextMgr.Clear()
+	a.shownContextWarning = false
 }
 
 // GetHistory returns conversation history
 func (a *Agent) GetHistory() []llm.Message {
-	return a.messages
+	return a.contextMgr.GetMessages()
 }

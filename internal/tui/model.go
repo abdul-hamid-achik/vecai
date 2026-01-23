@@ -13,9 +13,10 @@ import (
 type AppState int
 
 const (
-	StateIdle       AppState = iota // Waiting for user input
-	StateStreaming                  // Streaming LLM response
-	StatePermission                 // Waiting for permission input
+	StateIdle        AppState = iota // Waiting for user input
+	StateStreaming                   // Streaming LLM response
+	StatePermission                  // Waiting for permission input
+	StateRateLimited                 // Waiting for rate limit to clear
 )
 
 // BlockType represents the type of content block
@@ -88,8 +89,16 @@ type Model struct {
 	maxIterations  int       // Maximum loop iterations
 	loopStartTime  time.Time // When the current loop started
 
+	// Context tracking
+	contextUsage  float64 // Context usage as percentage (0.0 - 1.0)
+	contextWarn   bool    // Whether context warning threshold reached
+
 	// Interrupt channel for ESC during streaming
 	interruptChan chan struct{}
+
+	// Rate limit state
+	rateLimitInfo    *RateLimitInfo // Current rate limit info (nil if not rate limited)
+	rateLimitEndTime time.Time      // When rate limit expires
 
 	// Callback for query submission
 	onSubmit func(string)

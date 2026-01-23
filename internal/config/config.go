@@ -27,6 +27,15 @@ type RateLimitConfig struct {
 	EnableRateLimiting bool          `yaml:"enable_rate_limiting"` // Enable proactive rate limiting
 }
 
+// ContextConfig holds context management configuration
+type ContextConfig struct {
+	AutoCompactThreshold float64 `yaml:"auto_compact_threshold"` // Trigger auto-compact at this % (default: 0.95)
+	WarnThreshold        float64 `yaml:"warn_threshold"`         // Show warning at this % (default: 0.80)
+	PreserveLast         int     `yaml:"preserve_last"`          // Messages to preserve during compact (default: 4)
+	EnableAutoCompact    bool    `yaml:"enable_auto_compact"`    // Enable auto-compaction (default: true)
+	ContextWindow        int     `yaml:"context_window"`         // Context window size in tokens (default: 200000)
+}
+
 // Config holds the application configuration
 type Config struct {
 	APIKey      string          `yaml:"-"` // From environment only
@@ -36,6 +45,7 @@ type Config struct {
 	SkillsDir   string          `yaml:"skills_dir"`
 	VecgrepPath string          `yaml:"vecgrep_path"`
 	RateLimit   RateLimitConfig `yaml:"rate_limit"`
+	Context     ContextConfig   `yaml:"context"`
 
 	// Internal: where config was loaded from
 	configPath string
@@ -55,6 +65,13 @@ func DefaultConfig() *Config {
 			MaxDelay:           60 * time.Second,
 			TokensPerMinute:    30000,
 			EnableRateLimiting: true,
+		},
+		Context: ContextConfig{
+			AutoCompactThreshold: 0.95,
+			WarnThreshold:        0.80,
+			PreserveLast:         4,
+			EnableAutoCompact:    true,
+			ContextWindow:        200000,
 		},
 	}
 }

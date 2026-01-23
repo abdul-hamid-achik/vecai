@@ -15,16 +15,26 @@ type SessionStats struct {
 	OutputTokens   int64         // Total output tokens used
 }
 
+// RateLimitInfo contains information about the current rate limit state
+type RateLimitInfo struct {
+	Duration    time.Duration // Remaining time to wait
+	Reason      string        // Why we're rate limited
+	Attempt     int           // Current retry attempt (1-based, 0 if not a retry)
+	MaxAttempts int           // Maximum retry attempts (0 if not a retry)
+}
+
 // StreamMsg represents a streaming message from the LLM
 type StreamMsg struct {
-	Type     string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info", "stats"
-	Text     string
-	ToolName string
-	ToolDesc string
-	IsError  bool
-	Level    tools.PermissionLevel
-	Stats    *SessionStats // Session stats (only for "stats" type)
-	Usage    *TokenUsage   // Token usage (only for "done" type)
+	Type          string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info", "stats", "rate_limit", "rate_limit_clear", "context_stats"
+	Text          string
+	ToolName      string
+	ToolDesc      string
+	IsError       bool
+	Level         tools.PermissionLevel
+	Stats         *SessionStats     // Session stats (only for "stats" type)
+	Usage         *TokenUsage       // Token usage (only for "done" type)
+	RateLimitInfo *RateLimitInfo    // Rate limit info (only for "rate_limit" type)
+	ContextStats  *ContextStatsInfo // Context stats (only for "context_stats" type)
 }
 
 // TokenUsage represents token counts from API response
@@ -138,4 +148,27 @@ func NewActivityMsg(message string) StreamMsg {
 // NewStatsMsg creates a session statistics message
 func NewStatsMsg(stats SessionStats) StreamMsg {
 	return StreamMsg{Type: "stats", Stats: &stats}
+}
+
+// NewRateLimitMsg creates a rate limit notification message
+func NewRateLimitMsg(info RateLimitInfo) StreamMsg {
+	return StreamMsg{Type: "rate_limit", RateLimitInfo: &info}
+}
+
+// NewRateLimitClearMsg creates a message to clear rate limit status
+func NewRateLimitClearMsg() StreamMsg {
+	return StreamMsg{Type: "rate_limit_clear"}
+}
+
+// ContextStatsInfo contains context usage statistics for TUI display
+type ContextStatsInfo struct {
+	UsagePercent float64
+	UsedTokens   int
+	ContextWindow int
+	NeedsWarning bool
+}
+
+// NewContextStatsMsg creates a context stats update message
+func NewContextStatsMsg(info ContextStatsInfo) StreamMsg {
+	return StreamMsg{Type: "context_stats", ContextStats: &info}
 }
