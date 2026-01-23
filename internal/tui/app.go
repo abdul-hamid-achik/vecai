@@ -69,16 +69,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyPress handles keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	// Handle Ctrl+C globally
+	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
 		return m, tea.Quit
+	}
 
-	case tea.KeyEnter:
-		if m.state == StatePermission {
-			return m.handlePermissionKey(msg.String())
+	// Handle permission state first - respond immediately on keydown
+	if m.state == StatePermission {
+		key := msg.String()
+		switch key {
+		case "y", "Y", "n", "N", "a", "A", "v", "V":
+			// Handle permission keys immediately on keydown (lowercase the response)
+			return m.handlePermissionKey(string([]byte{key[0] | 0x20})) // convert to lowercase
 		}
+		// Treat Esc as deny
+		if msg.Type == tea.KeyEsc {
+			return m.handlePermissionKey("n")
+		}
+		// Ignore all other keys in permission state
+		return m, nil
+	}
 
+	// Handle normal input state
+	switch msg.Type {
+	case tea.KeyEnter:
 		if m.state == StateIdle {
 			input := m.textInput.Value()
 			if input == "" {
@@ -101,23 +116,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			return m, nil
 		}
-
 		return m, nil
 
 	case tea.KeyEsc:
-		if m.state == StatePermission {
-			// Treat Esc as deny
-			return m.handlePermissionKey("n")
-		}
-		return m, nil
-	}
-
-	// Handle permission prompt keys
-	if m.state == StatePermission {
-		key := msg.String()
-		if key == "y" || key == "n" || key == "a" || key == "v" {
-			return m.handlePermissionKey(key)
-		}
 		return m, nil
 	}
 

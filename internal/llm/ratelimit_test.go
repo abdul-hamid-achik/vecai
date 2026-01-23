@@ -105,6 +105,67 @@ func TestTokenBucket_Wait_Context_Cancelled(t *testing.T) {
 	}
 }
 
+func TestTokenBucket_Wait_ExceedsBurst(t *testing.T) {
+	// Create a bucket with small burst size
+	// NewTokenBucket(60) creates a bucket with burstSize = max(60/6, 1000) = 1000
+	// To get a smaller burst, we need very low tokens/minute
+	bucket := NewTokenBucket(60) // 60 tokens/minute, burst = 1000 (min)
+
+	// Request more tokens than the burst size allows
+	// The bucket has burst = 1000, so request more than that
+	hugeTokenRequest := 10000
+
+	var capturedWaitInfo WaitInfo
+	bucket.SetWaitCallback(func(ctx context.Context, info WaitInfo) error {
+		capturedWaitInfo = info
+		// Return immediately for testing (don't actually wait)
+		return nil
+	})
+
+	ctx := context.Background()
+	start := time.Now()
+	err := bucket.Wait(ctx, hugeTokenRequest)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+
+	// Verify the callback was called with a reasonable duration (1 minute fallback)
+	if capturedWaitInfo.Duration != time.Minute {
+		t.Errorf("WaitInfo.Duration = %v, want %v", capturedWaitInfo.Duration, time.Minute)
+	}
+
+	if capturedWaitInfo.Reason != "token bucket cooldown" {
+		t.Errorf("WaitInfo.Reason = %q, want %q", capturedWaitInfo.Reason, "token bucket cooldown")
+	}
+
+	// Should complete quickly since we returned immediately from callback
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("Wait() took too long: %v (callback should have returned immediately)", elapsed)
+	}
+}
+
+func TestTokenBucket_Wait_ExceedsBurst_NoCallback(t *testing.T) {
+	// Test the burst-exceeded case without a callback, using context cancellation
+	bucket := NewTokenBucket(60)
+	hugeTokenRequest := 10000
+
+	// Create a context that cancels quickly
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := bucket.Wait(ctx, hugeTokenRequest)
+
+	// Should get context deadline exceeded since we'd have to wait 1 minute
+	if err == nil {
+		t.Error("Wait() should return error when context times out")
+	}
+	if err != context.DeadlineExceeded {
+		t.Errorf("Wait() error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
 func TestRateLimitedClient_calculateBackoff(t *testing.T) {
 	cfg := &config.RateLimitConfig{
 		BaseDelay: 1 * time.Second,

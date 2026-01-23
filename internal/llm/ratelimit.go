@@ -92,9 +92,27 @@ func (tb *TokenBucket) Wait(ctx context.Context, tokens int) error {
 
 	// Reserve tokens
 	reservation := tb.limiter.ReserveN(time.Now(), tokens)
+
+	// Handle case where request exceeds burst capacity
 	if !reservation.OK() {
-		// If we can't reserve, wait for the full delay
-		logger.Debug("Rate limit: tokens exceed burst size, waiting for availability")
+		reservation.Cancel()
+		// Fall back to waiting for burst capacity to refill (max 60s)
+		delay := time.Minute
+		logger.Debug("Rate limit: tokens (%d) exceed burst size, waiting %v", tokens, delay)
+
+		if onWait != nil {
+			return onWait(ctx, WaitInfo{
+				Duration: delay,
+				Reason:   "token bucket cooldown",
+			})
+		}
+
+		select {
+		case <-time.After(delay):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	delay := reservation.Delay()
