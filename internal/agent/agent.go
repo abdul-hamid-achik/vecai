@@ -229,6 +229,7 @@ func (a *Agent) RunInteractiveTUI() error {
 	runner.SetSubmitCallback(func(input string) {
 		input = strings.TrimSpace(input)
 		if input == "" {
+			adapter.StreamDone() // Reset TUI state for empty input
 			return
 		}
 
@@ -238,6 +239,7 @@ func (a *Agent) RunInteractiveTUI() error {
 				runner.Quit()
 				return
 			}
+			adapter.StreamDone() // Reset TUI state after slash command
 			return
 		}
 
