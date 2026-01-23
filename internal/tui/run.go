@@ -36,7 +36,7 @@ func Run(cfg RunConfig) error {
 	)
 
 	// Create adapter
-	adapter := NewTUIAdapter(program, streamChan, model.resultChan)
+	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan)
 
 	// Set up submit callback
 	model.SetSubmitCallback(func(input string) {
@@ -105,7 +105,7 @@ func NewTUIRunner(modelName string) *TUIRunner {
 		tea.WithMouseCellMotion(),
 	)
 
-	adapter := NewTUIAdapter(program, streamChan, model.resultChan)
+	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan)
 
 	return &TUIRunner{
 		model:      &model,

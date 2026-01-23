@@ -9,19 +9,21 @@ import (
 
 // TUIAdapter bridges the TUI with the agent's OutputHandler and InputHandler interfaces
 type TUIAdapter struct {
-	program    *tea.Program
-	streamChan chan StreamMsg
-	resultChan chan PermissionResult
-	useColors  bool
+	program       *tea.Program
+	streamChan    chan StreamMsg
+	resultChan    chan PermissionResult
+	interruptChan chan struct{}
+	useColors     bool
 }
 
 // NewTUIAdapter creates a new TUI adapter
-func NewTUIAdapter(program *tea.Program, streamChan chan StreamMsg, resultChan chan PermissionResult) *TUIAdapter {
+func NewTUIAdapter(program *tea.Program, streamChan chan StreamMsg, resultChan chan PermissionResult, interruptChan chan struct{}) *TUIAdapter {
 	return &TUIAdapter{
-		program:    program,
-		streamChan: streamChan,
-		resultChan: resultChan,
-		useColors:  true,
+		program:       program,
+		streamChan:    streamChan,
+		resultChan:    resultChan,
+		interruptChan: interruptChan,
+		useColors:     true,
 	}
 }
 
@@ -50,6 +52,21 @@ func (a *TUIAdapter) StreamThinking(text string) {
 // StreamDone signals end of streaming
 func (a *TUIAdapter) StreamDone() {
 	a.streamChan <- NewDoneMsg()
+}
+
+// StreamDoneWithUsage signals end of streaming with token usage
+func (a *TUIAdapter) StreamDoneWithUsage(inputTokens, outputTokens int64) {
+	a.streamChan <- NewDoneMsgWithUsage(inputTokens, outputTokens)
+}
+
+// UpdateStats sends a stats update message
+func (a *TUIAdapter) UpdateStats(stats SessionStats) {
+	a.streamChan <- NewStatsMsg(stats)
+}
+
+// GetInterruptChan returns the interrupt channel for ESC handling
+func (a *TUIAdapter) GetInterruptChan() <-chan struct{} {
+	return a.interruptChan
 }
 
 // ToolCall outputs a tool call notification

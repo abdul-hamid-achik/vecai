@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -80,6 +81,16 @@ type Model struct {
 	// Activity indicator state
 	activityMessage string // Current activity message (e.g., "Thinking...", "Running: bash")
 
+	// Session statistics
+	inputTokens    int64     // Total input tokens used in session
+	outputTokens   int64     // Total output tokens used in session
+	loopIteration  int       // Current loop iteration
+	maxIterations  int       // Maximum loop iterations
+	loopStartTime  time.Time // When the current loop started
+
+	// Interrupt channel for ESC during streaming
+	interruptChan chan struct{}
+
 	// Callback for query submission
 	onSubmit func(string)
 
@@ -96,12 +107,14 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ti.Width = 50
 
 	return Model{
-		state:      StateIdle,
-		modelName:  modelName,
-		blocks:     []ContentBlock{},
-		streamChan: streamChan,
-		resultChan: make(chan PermissionResult, 1),
-		textInput:  ti,
+		state:         StateIdle,
+		modelName:     modelName,
+		blocks:        []ContentBlock{},
+		streamChan:    streamChan,
+		resultChan:    make(chan PermissionResult, 1),
+		textInput:     ti,
+		maxIterations: 20,
+		interruptChan: make(chan struct{}, 1),
 	}
 }
 
@@ -159,4 +172,26 @@ func (m Model) IsQuitting() bool {
 // GetResultChan returns the permission result channel
 func (m *Model) GetResultChan() chan PermissionResult {
 	return m.resultChan
+}
+
+// GetInterruptChan returns the interrupt channel for ESC handling
+func (m *Model) GetInterruptChan() chan struct{} {
+	return m.interruptChan
+}
+
+// GetSessionStats returns current session statistics
+func (m *Model) GetSessionStats() SessionStats {
+	return SessionStats{
+		LoopIteration:  m.loopIteration,
+		MaxIterations:  m.maxIterations,
+		LoopStartTime:  m.loopStartTime,
+		InputTokens:    m.inputTokens,
+		OutputTokens:   m.outputTokens,
+	}
+}
+
+// ResetLoopStats resets the loop-specific stats for a new query
+func (m *Model) ResetLoopStats() {
+	m.loopIteration = 0
+	m.loopStartTime = time.Now()
 }

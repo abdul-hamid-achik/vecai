@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -78,20 +79,97 @@ func (m Model) renderFooter() string {
 		return m.renderPermissionFooter()
 	}
 
+	var b strings.Builder
+
+	// Add status bar if streaming
+	if m.state == StateStreaming {
+		b.WriteString(m.renderStatusBar())
+		b.WriteString("\n")
+	}
+
 	// Input prompt
 	prompt := inputPromptStyle.Render("> ")
 
-	// Spinner with activity message if processing
-	var suffix string
-	if m.state == StateStreaming && m.activityMessage != "" {
-		frame := GetSpinnerFrame(m.spinnerFrame)
-		suffix = spinnerStyle.Render(" " + frame + " " + m.activityMessage)
+	// Build input line (input disabled during streaming)
+	var inputLine string
+	if m.state == StateStreaming {
+		inputLine = prompt + footerStyle.Foreground(dimColor).Render("[input disabled during processing]")
+	} else {
+		inputLine = prompt + m.textInput.View()
 	}
 
-	// Build input line
-	inputLine := prompt + m.textInput.View() + suffix
+	b.WriteString(footerStyle.Width(m.width).Render(inputLine))
+	return b.String()
+}
 
-	return footerStyle.Width(m.width).Render(inputLine)
+// renderStatusBar renders the status bar with session stats
+func (m Model) renderStatusBar() string {
+	var parts []string
+
+	// Model name
+	if m.modelName != "" {
+		parts = append(parts, statsLabelStyle.Render("Model: ")+statsValueStyle.Render(m.modelName))
+	}
+
+	// Current activity (what's happening)
+	if m.activityMessage != "" {
+		parts = append(parts, statsValueStyle.Render(m.activityMessage))
+	}
+
+	// Duration - how long this loop has been running
+	if !m.loopStartTime.IsZero() {
+		elapsed := time.Since(m.loopStartTime)
+		durationStr := formatDuration(elapsed)
+		parts = append(parts, statsValueStyle.Render(durationStr))
+	}
+
+	// Token usage - show accumulated tokens
+	if m.inputTokens > 0 || m.outputTokens > 0 {
+		tokenStr := fmt.Sprintf("⬆%s ⬇%s",
+			formatTokenCount(m.inputTokens),
+			formatTokenCount(m.outputTokens))
+		parts = append(parts, statsValueStyle.Render(tokenStr))
+	}
+
+	// Iteration count
+	if m.loopIteration > 0 {
+		iterStr := fmt.Sprintf("[%d/%d]", m.loopIteration, m.maxIterations)
+		parts = append(parts, statsValueStyle.Render(iterStr))
+	}
+
+	// ESC hint
+	parts = append(parts, statsHintStyle.Render("ESC to stop"))
+
+	// Join with separators
+	content := strings.Join(parts, statsLabelStyle.Render(" │ "))
+
+	return statusBarStyle.Width(m.width).Padding(0, 1).Render(content)
+}
+
+// formatDuration formats a duration as a human-readable string
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	if minutes >= 60 {
+		hours := minutes / 60
+		minutes = minutes % 60
+		return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
+}
+
+// formatTokenCount formats a token count with K suffix for thousands
+func formatTokenCount(count int64) string {
+	if count < 1000 {
+		return fmt.Sprintf("%d", count)
+	}
+	return fmt.Sprintf("%.1fk", float64(count)/1000)
 }
 
 // renderPermissionFooter renders the permission prompt in the footer

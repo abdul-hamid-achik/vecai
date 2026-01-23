@@ -32,12 +32,19 @@ type Response struct {
 	StopReason string
 }
 
+// Usage represents token usage from API responses
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+}
+
 // StreamChunk represents a chunk of streamed response
 type StreamChunk struct {
 	Type      string // "text", "thinking", "tool_call", "done"
 	Text      string
 	ToolCall  *ToolCall
 	Error     error
+	Usage     *Usage // Token usage (only set on "done" chunks)
 }
 
 // ToolDefinition defines a tool for the LLM
@@ -120,6 +127,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 
 		var currentToolCall *ToolCall
 		var toolInputJSON string
+		var usage *Usage
 
 		for stream.Next() {
 			event := stream.Current()
@@ -163,8 +171,15 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 					toolInputJSON = ""
 				}
 
+			case anthropic.MessageDeltaEvent:
+				// Capture usage from message delta
+				usage = &Usage{
+					InputTokens:  e.Usage.InputTokens,
+					OutputTokens: e.Usage.OutputTokens,
+				}
+
 			case anthropic.MessageStopEvent:
-				ch <- StreamChunk{Type: "done"}
+				ch <- StreamChunk{Type: "done", Usage: usage}
 			}
 		}
 

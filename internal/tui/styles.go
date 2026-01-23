@@ -103,6 +103,21 @@ var (
 	// Permission styles
 	permissionPromptStyle = lipgloss.NewStyle().
 				Foreground(dimColor)
+
+	// Status bar styles
+	statusBarStyle = lipgloss.NewStyle().
+			Foreground(dimColor).
+			Background(lipgloss.Color("235"))
+
+	statsValueStyle = lipgloss.NewStyle().
+			Foreground(primaryColor)
+
+	statsLabelStyle = lipgloss.NewStyle().
+			Foreground(dimColor)
+
+	statsHintStyle = lipgloss.NewStyle().
+			Foreground(warningColor).
+			Italic(true)
 )
 
 // Icons

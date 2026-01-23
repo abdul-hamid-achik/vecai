@@ -75,6 +75,17 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Handle ESC during streaming - send interrupt signal
+	if msg.Type == tea.KeyEsc && m.state == StateStreaming {
+		// Non-blocking send to interrupt channel
+		select {
+		case m.interruptChan <- struct{}{}:
+		default:
+			// Channel full, interrupt already pending
+		}
+		return m, nil
+	}
+
 	// Handle permission state first - respond immediately on keydown
 	if m.state == StatePermission {
 		key := msg.String()
@@ -173,10 +184,25 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			})
 			m.streaming.Reset()
 		}
+		// Accumulate token usage
+		if msg.Usage != nil {
+			m.inputTokens += msg.Usage.InputTokens
+			m.outputTokens += msg.Usage.OutputTokens
+		}
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
 		m.updateViewportContent()
+		return m, m.waitForStream()
+
+	case "stats":
+		// Update session statistics
+		if msg.Stats != nil {
+			m.loopIteration = msg.Stats.LoopIteration
+			m.maxIterations = msg.Stats.MaxIterations
+			m.loopStartTime = msg.Stats.LoopStartTime
+			// Don't overwrite accumulated tokens from done messages
+		}
 		return m, m.waitForStream()
 
 	case "tool_call":

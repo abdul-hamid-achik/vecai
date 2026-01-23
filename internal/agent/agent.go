@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
@@ -204,11 +205,31 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	return a.runLoopTUI(ctx, adapter)
 }
 
+// ErrInterrupted is returned when the user interrupts the loop with ESC
+var ErrInterrupted = errors.New("interrupted by user")
+
 // runLoopTUI executes the agent loop with TUI output
 func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 	const maxIterations = 20
+	loopStartTime := time.Now()
+	interruptChan := adapter.GetInterruptChan()
 
 	for i := 0; i < maxIterations; i++ {
+		// Check for interrupt before starting iteration
+		select {
+		case <-interruptChan:
+			adapter.Info("Loop interrupted by user")
+			return ErrInterrupted
+		default:
+		}
+
+		// Send stats update at start of each iteration
+		adapter.UpdateStats(tui.SessionStats{
+			LoopIteration:  i + 1,
+			MaxIterations:  maxIterations,
+			LoopStartTime:  loopStartTime,
+		})
+
 		// Get tool definitions
 		toolDefs := a.getToolDefinitions()
 
@@ -221,6 +242,14 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 
 		// Process stream
 		for chunk := range stream {
+			// Check for interrupt during streaming
+			select {
+			case <-interruptChan:
+				adapter.Info("Streaming interrupted by user")
+				return ErrInterrupted
+			default:
+			}
+
 			switch chunk.Type {
 			case "text":
 				adapter.StreamText(chunk.Text)
@@ -235,7 +264,12 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 				}
 
 			case "done":
-				adapter.StreamDone()
+				// Pass usage data if available
+				if chunk.Usage != nil {
+					adapter.StreamDoneWithUsage(chunk.Usage.InputTokens, chunk.Usage.OutputTokens)
+				} else {
+					adapter.StreamDone()
+				}
 
 			case "error":
 				if chunk.Error != nil {

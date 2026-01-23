@@ -1,15 +1,36 @@
 package tui
 
-import "github.com/abdul-hamid-achik/vecai/internal/tools"
+import (
+	"time"
+
+	"github.com/abdul-hamid-achik/vecai/internal/tools"
+)
+
+// SessionStats contains statistics about the current agent session
+type SessionStats struct {
+	LoopIteration  int           // Current iteration number
+	MaxIterations  int           // Maximum allowed iterations
+	LoopStartTime  time.Time     // When the current loop started
+	InputTokens    int64         // Total input tokens used
+	OutputTokens   int64         // Total output tokens used
+}
 
 // StreamMsg represents a streaming message from the LLM
 type StreamMsg struct {
-	Type     string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info"
+	Type     string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info", "stats"
 	Text     string
 	ToolName string
 	ToolDesc string
 	IsError  bool
 	Level    tools.PermissionLevel
+	Stats    *SessionStats // Session stats (only for "stats" type)
+	Usage    *TokenUsage   // Token usage (only for "done" type)
+}
+
+// TokenUsage represents token counts from API response
+type TokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // TickMsg is sent for spinner animation
@@ -41,6 +62,17 @@ func NewThinkingMsg(text string) StreamMsg {
 // NewDoneMsg creates a done stream message
 func NewDoneMsg() StreamMsg {
 	return StreamMsg{Type: "done"}
+}
+
+// NewDoneMsgWithUsage creates a done stream message with token usage
+func NewDoneMsgWithUsage(inputTokens, outputTokens int64) StreamMsg {
+	return StreamMsg{
+		Type: "done",
+		Usage: &TokenUsage{
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+		},
+	}
 }
 
 // NewToolCallMsg creates a tool call message
@@ -101,4 +133,9 @@ func NewUserMsg(text string) StreamMsg {
 // NewActivityMsg creates an activity status message
 func NewActivityMsg(message string) StreamMsg {
 	return StreamMsg{Type: "activity", Text: message}
+}
+
+// NewStatsMsg creates a session statistics message
+func NewStatsMsg(stats SessionStats) StreamMsg {
+	return StreamMsg{Type: "stats", Stats: &stats}
 }
