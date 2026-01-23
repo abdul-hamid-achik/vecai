@@ -9,8 +9,8 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.DefaultTier != TierSmart {
-		t.Errorf("expected default tier %s, got %s", TierSmart, cfg.DefaultTier)
+	if cfg.DefaultTier != TierFast {
+		t.Errorf("expected default tier %s, got %s", TierFast, cfg.DefaultTier)
 	}
 
 	if cfg.MaxTokens != 8192 {

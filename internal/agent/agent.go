@@ -325,10 +325,11 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 			})
 		}
 
+		// Update context stats after each API call
+		a.updateContextStatsTUI(ctx, adapter)
+
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
-			// Update context stats after completion
-			a.updateContextStatsTUI(ctx, adapter)
 			return nil
 		}
 
@@ -836,10 +837,11 @@ func (a *Agent) runLoop(ctx context.Context) error {
 			})
 		}
 
+		// Check context usage after each API call
+		a.checkContextUsage(ctx)
+
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
-			// Check context usage after completion
-			a.checkContextUsage(ctx)
 			return nil
 		}
 

@@ -54,7 +54,7 @@ type Config struct {
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultTier: TierSmart,
+		DefaultTier: TierFast,
 		MaxTokens:   8192,
 		Temperature: 0.7,
 		SkillsDir:   "skills",
