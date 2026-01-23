@@ -193,8 +193,12 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 		}
 
 		// Run query with TUI output
-		if err := a.runWithTUIOutput(input, adapter); err != nil {
+		err := a.runWithTUIOutput(input, adapter)
+		if err != nil {
 			adapter.Error(err)
+			// Send StreamDone on error since runLoopTUI doesn't send it on error paths
+			// (normal completion already sends StreamDone via the "done" chunk handler)
+			adapter.StreamDone()
 		}
 	})
 
@@ -203,10 +207,9 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 		a.checkVecgrepStatusTUI(adapter)
 	}
 
-	// Send welcome messages (only for interactive mode without initial query)
+	// Send welcome message (only for interactive mode without initial query)
 	if interactive && initialQuery == "" {
 		runner.SendInfo("vecai - Interactive Mode")
-		runner.SendInfo("Model: " + a.llm.GetModel())
 	}
 
 	// Run TUI - this blocks until quit
@@ -530,9 +533,8 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 
 		// Build description for permission prompt
 		description := formatToolDescription(call.Name, call.Input)
-		adapter.ToolCall(call.Name, description)
 
-		// Check permission using TUI adapter
+		// Check permission FIRST (before showing tool call)
 		allowed, err := a.checkPermissionTUI(call.Name, tool.Permission(), description, adapter)
 		if err != nil {
 			results = append(results, toolResult{
@@ -553,6 +555,9 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 			adapter.ToolResult(call.Name, "Permission denied", true)
 			continue
 		}
+
+		// Only show tool call AFTER permission granted
+		adapter.ToolCall(call.Name, description)
 
 		// Execute tool
 		result, err := tool.Execute(ctx, call.Input)

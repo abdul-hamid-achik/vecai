@@ -178,6 +178,20 @@ func (m Model) handlePermissionKey(key string) (tea.Model, tea.Cmd) {
 	default:
 	}
 
+	// Show feedback based on decision
+	var feedback ContentBlock
+	switch key {
+	case "y":
+		feedback = ContentBlock{Type: BlockSuccess, Content: "Allowed"}
+	case "n":
+		feedback = ContentBlock{Type: BlockWarning, Content: "Denied"}
+	case "a":
+		feedback = ContentBlock{Type: BlockSuccess, Content: "Always allowed (cached)"}
+	case "v":
+		feedback = ContentBlock{Type: BlockWarning, Content: "Never allowed (cached)"}
+	}
+	m.AddBlock(feedback)
+
 	// Return to idle state
 	m.state = StateIdle
 	m.textInput.Focus()

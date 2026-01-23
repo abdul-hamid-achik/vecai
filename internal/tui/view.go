@@ -102,11 +102,6 @@ func (m Model) renderFooter() string {
 func (m Model) renderStatusBar() string {
 	var parts []string
 
-	// Model name (always show)
-	if m.modelName != "" {
-		parts = append(parts, statsLabelStyle.Render("Model: ")+statsValueStyle.Render(m.modelName))
-	}
-
 	// Rate limit info takes priority over activity message
 	if m.rateLimitInfo != nil {
 		remaining := time.Until(m.rateLimitEndTime)
@@ -161,15 +156,18 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, statsValueStyle.Render(iterStr))
 	}
 
-	// Queue count (only show if items are queued)
+	// Queue count - ALWAYS show if items queued
 	if queueLen := len(m.inputQueue); queueLen > 0 {
 		parts = append(parts, warningStyle.Render(fmt.Sprintf("%d queued", queueLen)))
 	}
 
 	// Show contextual hint based on state
-	if m.state == StateStreaming || m.state == StateRateLimited {
+	switch m.state {
+	case StateStreaming, StateRateLimited:
 		parts = append(parts, statsHintStyle.Render("ESC to stop | Enter to queue"))
-	} else {
+	case StatePermission:
+		parts = append(parts, statsHintStyle.Render("y/n/a/v to respond"))
+	default:
 		parts = append(parts, statsHintStyle.Render("/help for commands"))
 	}
 
@@ -207,10 +205,27 @@ func formatTokenCount(count int64) string {
 
 // renderPermissionFooter renders the permission prompt in the footer
 func (m Model) renderPermissionFooter() string {
+	// Show permission level with color coding
+	levelStr := ""
+	switch m.permLevel {
+	case "read":
+		levelStr = infoStyle.Render("[READ]")
+	case "write":
+		levelStr = warningStyle.Render("[WRITE]")
+	case "execute":
+		levelStr = errorStyle.Render("[EXEC]")
+	default:
+		levelStr = infoStyle.Render("[" + m.permLevel + "]")
+	}
+
 	prompt := permissionPromptStyle.Render(
-		fmt.Sprintf("%s %s - %s [y]es / [n]o / [a]lways / ne[v]er: ",
-			iconWarning, m.permToolName, m.permDescription))
-	return footerStyle.Width(m.width).Render(prompt)
+		fmt.Sprintf("%s %s %s - %s",
+			iconWarning, levelStr, m.permToolName, m.permDescription))
+
+	// Key hints on same line
+	hints := statsHintStyle.Render(" [y]es/[n]o/[a]lways/ne[v]er")
+
+	return footerStyle.Width(m.width).Render(prompt + hints)
 }
 
 // renderStartupView renders the loading/startup view

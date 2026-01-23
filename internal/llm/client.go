@@ -125,6 +125,22 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 		params := c.buildParams(messages, tools, systemPrompt)
 		stream := c.client.Messages.NewStreaming(ctx, params)
 
+		// Monitor context cancellation in a separate goroutine
+		// This ensures we respond to ESC even if stream.Next() is blocking
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				// Context cancelled - send error immediately
+				select {
+				case ch <- StreamChunk{Type: "error", Error: ctx.Err()}:
+				default:
+				}
+			case <-done:
+			}
+		}()
+		defer close(done)
+
 		var currentToolCall *ToolCall
 		var toolInputJSON string
 		var usage *Usage
@@ -133,7 +149,6 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 			// Check for context cancellation
 			select {
 			case <-ctx.Done():
-				ch <- StreamChunk{Type: "error", Error: ctx.Err()}
 				return
 			default:
 			}
