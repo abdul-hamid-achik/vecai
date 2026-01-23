@@ -59,6 +59,18 @@ func NewRegistry() *Registry {
 	r.Register(&BashTool{})
 	r.Register(&GrepTool{})
 
+	// Register gpeek tools
+	r.Register(&GpeekStatusTool{})
+	r.Register(&GpeekDiffTool{})
+	r.Register(&GpeekLogTool{})
+	r.Register(&GpeekSummaryTool{})
+	r.Register(&GpeekBlameTool{})
+	r.Register(&GpeekBranchesTool{})
+	r.Register(&GpeekStashesTool{})
+	r.Register(&GpeekTagsTool{})
+	r.Register(&GpeekChangesBetweenTool{})
+	r.Register(&GpeekConflictCheckTool{})
+
 	return r
 }
 

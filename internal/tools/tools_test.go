@@ -21,6 +21,17 @@ func TestRegistry(t *testing.T) {
 		"list_files",
 		"bash",
 		"grep",
+		// gpeek tools
+		"gpeek_status",
+		"gpeek_diff",
+		"gpeek_log",
+		"gpeek_summary",
+		"gpeek_blame",
+		"gpeek_branches",
+		"gpeek_stashes",
+		"gpeek_tags",
+		"gpeek_changes_between",
+		"gpeek_conflict_check",
 	}
 
 	for _, name := range expectedTools {
@@ -34,8 +45,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	if len(tools) != 8 {
-		t.Errorf("expected 8 tools, got %d", len(tools))
+	if len(tools) != 18 {
+		t.Errorf("expected 18 tools, got %d", len(tools))
 	}
 }
 
@@ -43,8 +54,8 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	if len(defs) != 8 {
-		t.Errorf("expected 8 definitions, got %d", len(defs))
+	if len(defs) != 18 {
+		t.Errorf("expected 18 definitions, got %d", len(defs))
 	}
 
 	// Check that definitions have required fields
@@ -389,5 +400,348 @@ func TestToolInputSchemas(t *testing.T) {
 		if _, ok := schema["properties"].(map[string]any); !ok {
 			t.Errorf("tool %s schema should have properties", tool.Name())
 		}
+	}
+}
+
+// Gpeek tool tests
+
+func TestGpeekStatusTool(t *testing.T) {
+	tool := &GpeekStatusTool{}
+
+	if tool.Name() != "gpeek_status" {
+		t.Errorf("expected name 'gpeek_status', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+	if _, ok := props["path"]; !ok {
+		t.Error("expected 'path' in schema properties")
+	}
+}
+
+func TestGpeekDiffTool(t *testing.T) {
+	tool := &GpeekDiffTool{}
+
+	if tool.Name() != "gpeek_diff" {
+		t.Errorf("expected name 'gpeek_diff', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "file", "staged", "commit"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+}
+
+func TestGpeekLogTool(t *testing.T) {
+	tool := &GpeekLogTool{}
+
+	if tool.Name() != "gpeek_log" {
+		t.Errorf("expected name 'gpeek_log', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "limit", "author", "since"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+}
+
+func TestGpeekSummaryTool(t *testing.T) {
+	tool := &GpeekSummaryTool{}
+
+	if tool.Name() != "gpeek_summary" {
+		t.Errorf("expected name 'gpeek_summary', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "commits"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+}
+
+func TestGpeekBlameTool(t *testing.T) {
+	tool := &GpeekBlameTool{}
+
+	if tool.Name() != "gpeek_blame" {
+		t.Errorf("expected name 'gpeek_blame', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "file", "start_line", "end_line"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+
+	// Check required fields
+	required, ok := schema["required"].([]string)
+	if !ok {
+		t.Fatal("expected required in schema")
+	}
+	if len(required) != 1 || required[0] != "file" {
+		t.Error("expected 'file' to be required")
+	}
+
+	// Test missing required field
+	_, err := tool.Execute(context.Background(), map[string]any{})
+	if err == nil {
+		t.Error("expected error for missing file parameter")
+	}
+}
+
+func TestGpeekBranchesTool(t *testing.T) {
+	tool := &GpeekBranchesTool{}
+
+	if tool.Name() != "gpeek_branches" {
+		t.Errorf("expected name 'gpeek_branches', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "all"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+}
+
+func TestGpeekStashesTool(t *testing.T) {
+	tool := &GpeekStashesTool{}
+
+	if tool.Name() != "gpeek_stashes" {
+		t.Errorf("expected name 'gpeek_stashes', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+}
+
+func TestGpeekTagsTool(t *testing.T) {
+	tool := &GpeekTagsTool{}
+
+	if tool.Name() != "gpeek_tags" {
+		t.Errorf("expected name 'gpeek_tags', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+}
+
+func TestGpeekChangesBetweenTool(t *testing.T) {
+	tool := &GpeekChangesBetweenTool{}
+
+	if tool.Name() != "gpeek_changes_between" {
+		t.Errorf("expected name 'gpeek_changes_between', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "from", "to"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+
+	// Check required fields
+	required, ok := schema["required"].([]string)
+	if !ok {
+		t.Fatal("expected required in schema")
+	}
+	if len(required) != 1 || required[0] != "from" {
+		t.Error("expected 'from' to be required")
+	}
+
+	// Test missing required field
+	_, err := tool.Execute(context.Background(), map[string]any{})
+	if err == nil {
+		t.Error("expected error for missing from parameter")
+	}
+}
+
+func TestGpeekConflictCheckTool(t *testing.T) {
+	tool := &GpeekConflictCheckTool{}
+
+	if tool.Name() != "gpeek_conflict_check" {
+		t.Errorf("expected name 'gpeek_conflict_check', got %s", tool.Name())
+	}
+
+	if tool.Permission() != PermissionRead {
+		t.Errorf("expected permission Read, got %v", tool.Permission())
+	}
+
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	expectedProps := []string{"path", "branch", "into"}
+	for _, prop := range expectedProps {
+		if _, ok := props[prop]; !ok {
+			t.Errorf("expected '%s' in schema properties", prop)
+		}
+	}
+
+	// Check required fields
+	required, ok := schema["required"].([]string)
+	if !ok {
+		t.Fatal("expected required in schema")
+	}
+	if len(required) != 1 || required[0] != "branch" {
+		t.Error("expected 'branch' to be required")
+	}
+
+	// Test missing required field
+	_, err := tool.Execute(context.Background(), map[string]any{})
+	if err == nil {
+		t.Error("expected error for missing branch parameter")
+	}
+}
+
+func TestGpeekFormatFunctions(t *testing.T) {
+	// Test formatStatusResponse
+	statusJSON := `{
+		"repository": {"name": "test", "path": "/test", "branch": "main"},
+		"staged": [],
+		"unstaged": [],
+		"untracked": [],
+		"summary": {"staged_count": 0, "unstaged_count": 0, "untracked_count": 0, "is_clean": true, "has_conflicts": false}
+	}`
+	result, err := formatStatusResponse([]byte(statusJSON))
+	if err != nil {
+		t.Fatalf("formatStatusResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "test") || !strings.Contains(result, "main") {
+		t.Errorf("expected result to contain repo name and branch, got %q", result)
+	}
+	if !strings.Contains(result, "clean") {
+		t.Errorf("expected result to indicate clean working tree, got %q", result)
+	}
+
+	// Test formatLogResponse
+	logJSON := `{
+		"commits": [
+			{"hash": "abc123def", "short_hash": "abc123d", "message": "test commit", "author": "Test", "email": "test@test.com", "time_ago": "1 hour ago", "is_merge": false}
+		],
+		"total": 1
+	}`
+	result, err = formatLogResponse([]byte(logJSON))
+	if err != nil {
+		t.Fatalf("formatLogResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "abc123d") || !strings.Contains(result, "test commit") {
+		t.Errorf("expected result to contain commit info, got %q", result)
+	}
+
+	// Test formatLogResponse with empty commits
+	emptyLogJSON := `{"commits": [], "total": 0}`
+	result, err = formatLogResponse([]byte(emptyLogJSON))
+	if err != nil {
+		t.Fatalf("formatLogResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "No commits") {
+		t.Errorf("expected 'No commits found', got %q", result)
+	}
+
+	// Test formatDiffResponse with no changes
+	emptyDiffJSON := `{"files": [], "stats": {"files_changed": 0, "additions": 0, "deletions": 0}}`
+	result, err = formatDiffResponse([]byte(emptyDiffJSON))
+	if err != nil {
+		t.Fatalf("formatDiffResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "No changes") {
+		t.Errorf("expected 'No changes', got %q", result)
+	}
+
+	// Test formatStashesResponse with no stashes
+	emptyStashesJSON := `{"stashes": [], "total": 0}`
+	result, err = formatStashesResponse([]byte(emptyStashesJSON))
+	if err != nil {
+		t.Fatalf("formatStashesResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "No stashes") {
+		t.Errorf("expected 'No stashes found', got %q", result)
+	}
+
+	// Test formatTagsResponse with no tags
+	emptyTagsJSON := `{"tags": [], "total": 0}`
+	result, err = formatTagsResponse([]byte(emptyTagsJSON))
+	if err != nil {
+		t.Fatalf("formatTagsResponse failed: %v", err)
+	}
+	if !strings.Contains(result, "No tags") {
+		t.Errorf("expected 'No tags found', got %q", result)
 	}
 }

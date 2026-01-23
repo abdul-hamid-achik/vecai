@@ -25,11 +25,22 @@ vecai
 
 ## Installation
 
-### Prerequisites
+### Homebrew (macOS and Linux)
 
-- Go 1.21 or later
-- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) (optional, for semantic search)
-- Anthropic API key
+```bash
+brew tap abdul-hamid-achik/tap
+brew install vecai
+```
+
+### Go Install
+
+```bash
+go install github.com/abdul-hamid-achik/vecai/cmd/vecai@latest
+```
+
+### Download Binary
+
+Pre-built binaries for macOS, Linux, and Windows are available on the [Releases](https://github.com/abdul-hamid-achik/vecai/releases) page.
 
 ### From Source
 
@@ -42,11 +53,16 @@ go build -o vecai ./cmd/vecai
 task build
 ```
 
+### Prerequisites
+
+- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) (optional, for semantic search)
+- [gpeek](https://github.com/abdul-hamid-achik/gpeek) (optional, for git visualization)
+- Anthropic API key
+
 ### Verify Installation
 
 ```bash
 vecai --version
-# vecai version 0.1.0
 ```
 
 ## Usage
@@ -148,16 +164,38 @@ vecgrep_path: vecgrep
 
 vecai can use these tools to interact with your codebase:
 
+### Core Tools
+
 | Tool | Permission | Description |
 |------|------------|-------------|
-| `vecgrep_search` | Read | Semantic code search |
-| `vecgrep_status` | Read | Check search index status |
 | `read_file` | Read | Read file contents |
 | `list_files` | Read | List directory contents |
 | `grep` | Read | Pattern search (ripgrep) |
 | `write_file` | Write | Create or overwrite files |
 | `edit_file` | Write | Make targeted edits |
 | `bash` | Execute | Run shell commands |
+
+### Semantic Search (vecgrep)
+
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `vecgrep_search` | Read | Semantic code search |
+| `vecgrep_status` | Read | Check search index status |
+
+### Git Visualization (gpeek)
+
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `gpeek_status` | Read | Repository status (staged/unstaged/untracked) |
+| `gpeek_diff` | Read | Structured diffs with hunks |
+| `gpeek_log` | Read | Commit history with filters |
+| `gpeek_summary` | Read | Complete repo snapshot (ideal for AI) |
+| `gpeek_blame` | Read | Line-by-line attribution |
+| `gpeek_branches` | Read | List branches |
+| `gpeek_stashes` | Read | List stashes |
+| `gpeek_tags` | Read | List tags |
+| `gpeek_changes_between` | Read | Changes between refs |
+| `gpeek_conflict_check` | Read | Predict merge conflicts |
 
 ## Skills
 
@@ -221,7 +259,11 @@ Switch tiers in interactive mode:
 For semantic search capabilities, install and initialize vecgrep:
 
 ```bash
-# Install vecgrep
+# Install vecgrep via Homebrew
+brew tap abdul-hamid-achik/tap
+brew install vecgrep
+
+# Or via Go
 go install github.com/abdul-hamid-achik/vecgrep@latest
 
 # Initialize in your project
@@ -233,6 +275,32 @@ vecai /status
 ```
 
 Without vecgrep, vecai still works but uses pattern-based search only.
+
+## Git Visualization Setup
+
+For enhanced git visualization capabilities, install gpeek:
+
+```bash
+# Install gpeek via Homebrew
+brew tap abdul-hamid-achik/tap
+brew install gpeek
+
+# Or via Go
+go install github.com/abdul-hamid-achik/gpeek@latest
+
+# Verify
+gpeek --version
+```
+
+With gpeek, you can ask questions like:
+```bash
+vecai "what's the git status?"
+vecai "show me recent commits"
+vecai "what changed between main and this branch?"
+vecai "will merging feature-branch cause conflicts?"
+```
+
+Without gpeek, vecai falls back to basic `git` commands via bash.
 
 ## Examples
 
@@ -266,6 +334,17 @@ vecai "review this code"
 vecai plan "migrate from REST to GraphQL"
 vecai plan "add comprehensive test coverage"
 vecai plan "implement caching layer"
+```
+
+### Git Operations
+
+```bash
+vecai "what's the current git status?"
+vecai "show me the last 5 commits"
+vecai "who last modified the auth module?"
+vecai "what changed between v1.0 and HEAD?"
+vecai "will merging feature-branch into main cause conflicts?"
+vecai "give me a complete summary of this repository"
 ```
 
 ## Troubleshooting
