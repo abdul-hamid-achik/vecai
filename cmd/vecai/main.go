@@ -62,7 +62,14 @@ func run() error {
 	// Initialize components
 	output := ui.NewOutputHandler()
 	input := ui.NewInputHandler()
-	llmClient := llm.NewClient(cfg)
+	baseClient := llm.NewClient(cfg)
+
+	// Wrap with rate limiting if enabled
+	var llmClient llm.LLMClient = baseClient
+	if cfg.RateLimit.EnableRateLimiting {
+		llmClient = llm.NewRateLimitedClient(baseClient, &cfg.RateLimit)
+	}
+
 	registry := tools.NewRegistry()
 	policy := permissions.NewPolicy(permMode, input, output)
 	skillLoader := skills.NewLoader()

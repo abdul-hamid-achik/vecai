@@ -47,6 +47,15 @@ type ToolDefinition struct {
 	InputSchema map[string]any
 }
 
+// LLMClient is the interface for LLM clients
+type LLMClient interface {
+	Chat(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) (*Response, error)
+	ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) <-chan StreamChunk
+	SetModel(model string)
+	SetTier(tier config.ModelTier)
+	GetModel() string
+}
+
 // Client wraps the Anthropic SDK
 type Client struct {
 	client *anthropic.Client
@@ -56,7 +65,11 @@ type Client struct {
 
 // NewClient creates a new LLM client
 func NewClient(cfg *config.Config) *Client {
-	client := anthropic.NewClient(option.WithAPIKey(cfg.APIKey))
+	opts := []option.RequestOption{
+		option.WithAPIKey(cfg.APIKey),
+		option.WithMaxRetries(cfg.RateLimit.MaxRetries),
+	}
+	client := anthropic.NewClient(opts...)
 	return &Client{
 		client: &client,
 		config: cfg,

@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/anthropics/anthropic-sdk-go v1.19.0
+	golang.org/x/time v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,14 +18,24 @@ const (
 	TierGenius ModelTier = "genius" // Claude Opus
 )
 
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	MaxRetries         int           `yaml:"max_retries"`          // Maximum retries on 429
+	BaseDelay          time.Duration `yaml:"base_delay"`           // Base delay for exponential backoff
+	MaxDelay           time.Duration `yaml:"max_delay"`            // Maximum delay between retries
+	TokensPerMinute    int           `yaml:"tokens_per_minute"`    // Rate limit (tokens/minute)
+	EnableRateLimiting bool          `yaml:"enable_rate_limiting"` // Enable proactive rate limiting
+}
+
 // Config holds the application configuration
 type Config struct {
-	APIKey      string    `yaml:"-"` // From environment only
-	DefaultTier ModelTier `yaml:"default_tier"`
-	MaxTokens   int       `yaml:"max_tokens"`
-	Temperature float64   `yaml:"temperature"`
-	SkillsDir   string    `yaml:"skills_dir"`
-	VecgrepPath string    `yaml:"vecgrep_path"`
+	APIKey      string          `yaml:"-"` // From environment only
+	DefaultTier ModelTier       `yaml:"default_tier"`
+	MaxTokens   int             `yaml:"max_tokens"`
+	Temperature float64         `yaml:"temperature"`
+	SkillsDir   string          `yaml:"skills_dir"`
+	VecgrepPath string          `yaml:"vecgrep_path"`
+	RateLimit   RateLimitConfig `yaml:"rate_limit"`
 
 	// Internal: where config was loaded from
 	configPath string
@@ -38,6 +49,13 @@ func DefaultConfig() *Config {
 		Temperature: 0.7,
 		SkillsDir:   "skills",
 		VecgrepPath: "vecgrep",
+		RateLimit: RateLimitConfig{
+			MaxRetries:         5,
+			BaseDelay:          1 * time.Second,
+			MaxDelay:           60 * time.Second,
+			TokensPerMinute:    30000,
+			EnableRateLimiting: true,
+		},
 	}
 }
 

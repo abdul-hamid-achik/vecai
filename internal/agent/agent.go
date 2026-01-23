@@ -45,7 +45,7 @@ When responding:
 
 // Config holds agent configuration
 type Config struct {
-	LLM         *llm.Client
+	LLM         llm.LLMClient
 	Tools       *tools.Registry
 	Permissions *permissions.Policy
 	Skills      *skills.Loader
@@ -56,7 +56,7 @@ type Config struct {
 
 // Agent is the main AI agent
 type Agent struct {
-	llm         *llm.Client
+	llm         llm.LLMClient
 	tools       *tools.Registry
 	permissions *permissions.Policy
 	skills      *skills.Loader

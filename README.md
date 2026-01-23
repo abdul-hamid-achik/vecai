@@ -9,6 +9,7 @@ AI-powered codebase assistant that combines semantic search with Claude's intell
 - **Plan Mode** - Break down complex tasks into steps with interactive questionnaires
 - **Permission System** - Control what the AI can read, write, or execute
 - **Skills** - Customizable prompts for common tasks like code review
+- **Rate Limiting** - Built-in rate limiting with exponential backoff to prevent API errors
 
 ## Quick Start
 
@@ -152,6 +153,14 @@ skills_dir: skills
 
 # Path to vecgrep binary
 vecgrep_path: vecgrep
+
+# Rate limiting configuration
+rate_limit:
+  max_retries: 5           # Retry attempts on rate limit errors
+  base_delay: 1s           # Initial backoff delay
+  max_delay: 60s           # Maximum backoff delay
+  tokens_per_minute: 30000 # Proactive rate limit threshold
+  enable_rate_limiting: true
 ```
 
 ### Environment Variables
@@ -276,6 +285,38 @@ vecai /status
 
 Without vecgrep, vecai still works but uses pattern-based search only.
 
+## Rate Limiting
+
+vecai includes built-in rate limiting to prevent hitting Anthropic API rate limits (429 errors). This is enabled by default and works automatically.
+
+### How It Works
+
+1. **Proactive Rate Limiting** - Estimates token usage and throttles requests before hitting limits
+2. **SDK Retries** - Configures the Anthropic SDK with automatic retries
+3. **Exponential Backoff** - When rate limits are hit, retries with increasing delays plus jitter
+
+### Configuration
+
+Rate limiting can be customized in your config file:
+
+```yaml
+rate_limit:
+  max_retries: 5           # Number of retry attempts (default: 5)
+  base_delay: 1s           # Initial backoff delay (default: 1s)
+  max_delay: 60s           # Maximum backoff delay (default: 60s)
+  tokens_per_minute: 30000 # Token rate limit threshold (default: 30000)
+  enable_rate_limiting: true # Enable/disable rate limiting (default: true)
+```
+
+### Disabling Rate Limiting
+
+If you have higher API limits or prefer to handle rate limiting differently:
+
+```yaml
+rate_limit:
+  enable_rate_limiting: false
+```
+
 ## Git Visualization Setup
 
 For enhanced git visualization capabilities, install gpeek:
@@ -374,6 +415,20 @@ Switch to a faster model:
 ```
 /mode fast
 ```
+
+### Rate Limit Errors (429)
+
+vecai handles rate limits automatically with retries and backoff. If you still see errors:
+
+1. **Wait and retry** - Rate limits reset over time
+2. **Reduce request frequency** - Space out your queries
+3. **Adjust configuration** - Increase `max_retries` or `max_delay`:
+   ```yaml
+   rate_limit:
+     max_retries: 10
+     max_delay: 120s
+   ```
+4. **Check your API tier** - Higher tiers have higher rate limits
 
 ## Development
 
