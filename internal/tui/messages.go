@@ -172,3 +172,8 @@ type ContextStatsInfo struct {
 func NewContextStatsMsg(info ContextStatsInfo) StreamMsg {
 	return StreamMsg{Type: "context_stats", ContextStats: &info}
 }
+
+// NewSessionIDMsg creates a session ID update message
+func NewSessionIDMsg(sessionID string) StreamMsg {
+	return StreamMsg{Type: "session_id", Text: sessionID}
+}

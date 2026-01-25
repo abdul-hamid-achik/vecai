@@ -172,7 +172,7 @@ func (c *Config) createDefault() error {
 func (c *Config) GetModel(tier ModelTier) string {
 	switch tier {
 	case TierFast:
-		return "claude-haiku-4-5-20251015"
+		return "claude-haiku-4-5-20251001"
 	case TierSmart:
 		return "claude-sonnet-4-5-20250929"
 	case TierGenius:

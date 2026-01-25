@@ -5,8 +5,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// Markdown renderer with Nord-compatible dark style
+var mdRenderer *glamour.TermRenderer
+
+func init() {
+	// Create a dark-themed renderer that matches Nord palette
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(), // Auto-detect dark/light
+		glamour.WithWordWrap(100),
+	)
+	if err != nil {
+		// Fallback: no markdown rendering
+		mdRenderer = nil
+	} else {
+		mdRenderer = r
+	}
+}
+
+// renderMarkdown renders markdown text, falling back to plain text on error
+func renderMarkdown(content string) string {
+	if mdRenderer == nil {
+		return content
+	}
+
+	rendered, err := mdRenderer.Render(content)
+	if err != nil {
+		return content
+	}
+
+	// Trim trailing newlines that glamour adds
+	return strings.TrimSuffix(rendered, "\n")
+}
 
 // View renders the entire TUI
 func (m Model) View() string {
@@ -39,33 +72,20 @@ func (m Model) renderHeader() string {
 	// Title
 	title := headerTitleStyle.Render("vecai")
 
+	// Session ID (if available)
+	sessionPart := ""
+	if m.sessionID != "" {
+		// Show short session ID in subtle style
+		sessionPart = headerModelStyle.Render(fmt.Sprintf(" [%s]", m.sessionID))
+	}
+
 	// Model info
 	model := headerModelStyle.Render(fmt.Sprintf("Model: %s", m.modelName))
 
-	// Status
-	var status string
-	switch m.state {
-	case StateIdle:
-		status = headerStatusStyle.Render("Ready")
-	case StateStreaming:
-		frame := GetSpinnerFrame(m.spinnerFrame)
-		msg := m.activityMessage
-		if msg == "" {
-			msg = "Processing..."
-		}
-		status = spinnerStyle.Render(frame + " " + msg)
-	case StatePermission:
-		status = warningStyle.Render("Permission Required")
-	case StateRateLimited:
-		frame := GetSpinnerFrame(m.spinnerFrame)
-		status = warningStyle.Render(frame + " Rate limited")
-	}
+	// Calculate spacing - header shows title, session, and model
+	leftPart := title + sessionPart
+	rightPart := model
 
-	// Calculate spacing
-	leftPart := title
-	rightPart := model + " | " + status
-
-	// Build header with proper width
 	availWidth := m.width - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 4
 	if availWidth < 0 {
 		availWidth = 0
@@ -102,8 +122,11 @@ func (m Model) renderFooter() string {
 func (m Model) renderStatusBar() string {
 	var parts []string
 
-	// Rate limit info takes priority over activity message
-	if m.rateLimitInfo != nil {
+	// Permission state takes priority
+	if m.state == StatePermission {
+		parts = append(parts, warningStyle.Render("⚠ Permission Required"))
+	} else if m.rateLimitInfo != nil {
+		// Rate limit info
 		remaining := time.Until(m.rateLimitEndTime)
 		if remaining > 0 {
 			rateLimitStr := fmt.Sprintf("⏳ Rate limited: %s", formatDuration(remaining))
@@ -116,8 +139,13 @@ func (m Model) renderStatusBar() string {
 			parts = append(parts, warningStyle.Render(rateLimitStr))
 		}
 	} else if m.activityMessage != "" {
-		// Current activity (what's happening)
-		parts = append(parts, statsValueStyle.Render(m.activityMessage))
+		// Show spinner + activity during active processing states
+		if m.state == StateStreaming || m.state == StateRateLimited {
+			frame := GetSpinnerFrame(m.spinnerFrame)
+			parts = append(parts, spinnerStyle.Render(frame+" "+m.activityMessage))
+		} else {
+			parts = append(parts, statsValueStyle.Render(m.activityMessage))
+		}
 	}
 
 	// Duration - how long this loop has been running (only during active processing)
@@ -129,10 +157,9 @@ func (m Model) renderStatusBar() string {
 
 	// Token usage - show accumulated tokens (always show if we have any)
 	if m.inputTokens > 0 || m.outputTokens > 0 {
-		tokenStr := fmt.Sprintf("⬆%s ⬇%s",
-			formatTokenCount(m.inputTokens),
-			formatTokenCount(m.outputTokens))
-		parts = append(parts, statsValueStyle.Render(tokenStr))
+		// Show input and output as separate parts for better spacing
+		parts = append(parts, statsValueStyle.Render(fmt.Sprintf("⬆ %s", formatTokenCount(m.inputTokens))))
+		parts = append(parts, statsValueStyle.Render(fmt.Sprintf("⬇ %s", formatTokenCount(m.outputTokens))))
 	}
 
 	// Context usage - show if tracked (color-coded by threshold)
@@ -171,8 +198,8 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, statsHintStyle.Render("/help for commands"))
 	}
 
-	// Join with separators
-	content := strings.Join(parts, statsLabelStyle.Render(" │ "))
+	// Join with separators (wider spacing for readability)
+	content := strings.Join(parts, statsLabelStyle.Render("  │  "))
 
 	return statusBarStyle.Width(m.width).Padding(0, 1).Render(content)
 }
@@ -284,9 +311,9 @@ func (m Model) renderUserBlock(block ContentBlock) string {
 	return prefix + content
 }
 
-// renderAssistantBlock renders an assistant message
+// renderAssistantBlock renders an assistant message with markdown
 func (m Model) renderAssistantBlock(block ContentBlock) string {
-	return assistantStyle.Render(block.Content)
+	return renderMarkdown(block.Content)
 }
 
 // renderThinkingBlock renders thinking text

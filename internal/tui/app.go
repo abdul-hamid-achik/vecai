@@ -4,9 +4,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// appLog is a prefixed logger for TUI app events
+var appLog = logger.WithPrefix("TUI-APP")
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -20,6 +24,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPress(msg)
 
 	case tea.WindowSizeMsg:
+		appLog.Debug("WindowSizeMsg received: %dx%d, ready=%v", msg.Width, msg.Height, m.ready)
 		m.width = msg.Width
 		m.height = msg.Height
 
@@ -30,6 +35,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		viewportHeight := m.height - headerHeight - footerHeight - 2
 
 		if !m.ready {
+			appLog.Debug("First WindowSizeMsg - initializing TUI, callbacks=%p", m.callbacks)
 			// Initialize viewport
 			m.viewport = viewport.New(m.width, viewportHeight)
 			m.textInput.Width = m.width - 4
@@ -38,6 +44,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinnerActive = false
 
 			// Signal ready and start stream listener
+			appLog.Debug("Returning signalReady command")
 			return m, tea.Batch(m.waitForStream(), m.signalReady())
 		} else {
 			m.viewport.Width = m.width
@@ -87,6 +94,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Non-blocking send to interrupt channel
 		select {
 		case m.interruptChan <- struct{}{}:
+			m.activityMessage = "Stopping..." // Immediate visual feedback
 		default:
 			// Channel full, interrupt already pending
 		}
@@ -120,8 +128,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Slash commands execute immediately (bypass queue)
 		if strings.HasPrefix(input, "/") {
-			if m.onSubmit != nil {
-				go m.onSubmit(input)
+			if m.callbacks.onSubmit != nil {
+				go m.callbacks.onSubmit(input)
 			}
 			return m, nil
 		}
@@ -141,8 +149,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.loopStartTime = time.Now()
 
 			// Call submit callback if set
-			if m.onSubmit != nil {
-				go m.onSubmit(input)
+			if m.callbacks.onSubmit != nil {
+				go m.callbacks.onSubmit(input)
 			}
 
 			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
@@ -241,8 +249,8 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			m.activityMessage = "Processing..."
 			m.loopIteration = 0
 			m.loopStartTime = time.Now()
-			if m.onSubmit != nil {
-				go m.onSubmit(nextInput)
+			if m.callbacks.onSubmit != nil {
+				go m.callbacks.onSubmit(nextInput)
 			}
 			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
 		}
@@ -316,8 +324,8 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			m.activityMessage = "Processing..."
 			m.loopIteration = 0
 			m.loopStartTime = time.Now()
-			if m.onSubmit != nil {
-				go m.onSubmit(nextInput)
+			if m.callbacks.onSubmit != nil {
+				go m.callbacks.onSubmit(nextInput)
 			}
 			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
 		}
@@ -404,6 +412,10 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			m.contextUsage = msg.ContextStats.UsagePercent
 			m.contextWarn = msg.ContextStats.NeedsWarning
 		}
+		return m, m.waitForStream()
+
+	case "session_id":
+		m.sessionID = msg.Text
 		return m, m.waitForStream()
 	}
 

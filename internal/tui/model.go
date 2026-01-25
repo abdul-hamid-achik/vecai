@@ -4,10 +4,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// tuiLog is a prefixed logger for TUI events
+var tuiLog = logger.WithPrefix("TUI")
 
 // AppState represents the current state of the application
 type AppState int
@@ -49,6 +53,12 @@ type PermissionResult struct {
 	Decision string // "y", "n", "a", "v"
 }
 
+// modelCallbacks holds callbacks that need to survive model copies
+type modelCallbacks struct {
+	onSubmit func(string)
+	onReady  func()
+}
+
 // Model is the main Bubble Tea model for the TUI
 type Model struct {
 	// Dimensions
@@ -58,11 +68,12 @@ type Model struct {
 	// State
 	state     AppState
 	modelName string
+	sessionID string // Current session ID (short form for display)
 	ready     bool
 
 	// Content
 	blocks    []ContentBlock
-	streaming strings.Builder
+	streaming *strings.Builder // Pointer to survive model copies
 
 	// Components
 	viewport  viewport.Model
@@ -103,11 +114,8 @@ type Model struct {
 	rateLimitInfo    *RateLimitInfo // Current rate limit info (nil if not rate limited)
 	rateLimitEndTime time.Time      // When rate limit expires
 
-	// Callback for query submission
-	onSubmit func(string)
-
-	// Callback for when TUI is ready
-	onReady func()
+	// Callbacks (use pointer so they survive copy to tea.Program)
+	callbacks *modelCallbacks
 
 	// Quit signal
 	quitting bool
@@ -121,6 +129,7 @@ type Model struct {
 func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type message..."
+	ti.Prompt = "" // We render our own prompt in the footer
 	ti.Focus()
 	ti.CharLimit = 0 // No limit
 	ti.Width = 50
@@ -129,6 +138,7 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		state:         StateStarting,
 		modelName:     modelName,
 		blocks:        []ContentBlock{},
+		streaming:     &strings.Builder{}, // Pointer survives model copies
 		streamChan:    streamChan,
 		resultChan:    make(chan PermissionResult, 1),
 		readyChan:     make(chan struct{}),
@@ -137,12 +147,14 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		interruptChan: make(chan struct{}, 1),
 		inputQueue:    make([]string, 0, 10),
 		maxQueueSize:  10,
+		callbacks:     &modelCallbacks{}, // Pointer survives copy to tea.Program
 	}
 }
 
 // SetOnReady sets the callback for when TUI is ready
 func (m *Model) SetOnReady(fn func()) {
-	m.onReady = fn
+	tuiLog.Debug("SetOnReady: callbacks=%p, hasCallback=%v", m.callbacks, fn != nil)
+	m.callbacks.onReady = fn
 }
 
 // GetReadyChan returns the ready channel
@@ -152,7 +164,7 @@ func (m *Model) GetReadyChan() <-chan struct{} {
 
 // SetSubmitCallback sets the callback for when user submits a query
 func (m *Model) SetSubmitCallback(fn func(string)) {
-	m.onSubmit = fn
+	m.callbacks.onSubmit = fn
 }
 
 // Init initializes the model
@@ -175,17 +187,26 @@ func (m Model) waitForStream() tea.Cmd {
 
 // signalReady signals that the TUI is ready and calls the onReady callback
 func (m Model) signalReady() tea.Cmd {
+	// Capture callbacks pointer to ensure we use the shared instance
+	callbacks := m.callbacks
+	tuiLog.Debug("signalReady: callbacks=%p, hasOnReady=%v", callbacks, callbacks != nil && callbacks.onReady != nil)
 	return func() tea.Msg {
+		tuiLog.Debug("signalReady cmd executing")
 		// Close ready channel to signal ready (non-blocking for multiple listeners)
 		select {
 		case <-m.readyChan:
-			// Already closed
+			tuiLog.Debug("signalReady: readyChan already closed")
 		default:
 			close(m.readyChan)
+			tuiLog.Debug("signalReady: closed readyChan")
 		}
 		// Call onReady callback if set
-		if m.onReady != nil {
-			m.onReady()
+		if callbacks != nil && callbacks.onReady != nil {
+			tuiLog.Debug("signalReady: calling onReady callback")
+			callbacks.onReady()
+			tuiLog.Debug("signalReady: onReady callback returned")
+		} else {
+			tuiLog.Debug("signalReady: no onReady callback set")
 		}
 		return nil
 	}

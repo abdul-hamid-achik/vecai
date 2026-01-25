@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/logger"
@@ -125,35 +127,36 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 		params := c.buildParams(messages, tools, systemPrompt)
 		stream := c.client.Messages.NewStreaming(ctx, params)
 
-		// Monitor context cancellation in a separate goroutine
-		// This ensures we respond to ESC even if stream.Next() is blocking
-		done := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				// Context cancelled - send error immediately
-				select {
-				case ch <- StreamChunk{Type: "error", Error: ctx.Err()}:
-				default:
-				}
-			case <-done:
-			}
-		}()
-		defer close(done)
+		// Wrap stream for non-blocking, interruptible reads
+		// 60 second timeout per chunk to detect hung connections
+		wrapper := NewStreamWrapper(ctx, stream, 60*time.Second)
 
 		var currentToolCall *ToolCall
 		var toolInputJSON string
 		var usage *Usage
 
-		for stream.Next() {
-			// Check for context cancellation
-			select {
-			case <-ctx.Done():
+		for {
+			event, hasMore, err := wrapper.Next()
+			if err != nil {
+				// Handle different error types
+				if errors.Is(err, context.Canceled) {
+					// ESC was pressed - exit cleanly without error message
+					return
+				}
+				if errors.Is(err, ErrChunkTimeout) {
+					// Timeout - send error to TUI
+					ch <- StreamChunk{Type: "error", Error: fmt.Errorf("stream timeout: no response from server for 60 seconds")}
+					return
+				}
+				// Other errors (network, API, etc.)
+				logger.Error("ChatStream: stream error: %v", err)
+				ch <- StreamChunk{Type: "error", Error: err}
 				return
-			default:
 			}
-
-			event := stream.Current()
+			if !hasMore {
+				// Stream ended normally
+				break
+			}
 
 			switch e := event.AsAny().(type) {
 			case anthropic.ContentBlockStartEvent:
@@ -204,14 +207,6 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, tools []Too
 			case anthropic.MessageStopEvent:
 				ch <- StreamChunk{Type: "done", Usage: usage}
 			}
-		}
-
-		if err := stream.Err(); err != nil {
-			// Don't log context cancellation as an error
-			if ctx.Err() == nil {
-				logger.Error("ChatStream: stream error: %v", err)
-			}
-			ch <- StreamChunk{Type: "error", Error: err}
 		}
 	}()
 

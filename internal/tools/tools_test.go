@@ -14,6 +14,7 @@ func TestRegistry(t *testing.T) {
 	// Check default tools are registered
 	expectedTools := []string{
 		"vecgrep_search",
+		"vecgrep_similar",
 		"vecgrep_status",
 		"read_file",
 		"write_file",
@@ -45,8 +46,8 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	if len(tools) != 18 {
-		t.Errorf("expected 18 tools, got %d", len(tools))
+	if len(tools) != 19 {
+		t.Errorf("expected 19 tools, got %d", len(tools))
 	}
 }
 
@@ -54,8 +55,8 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	if len(defs) != 18 {
-		t.Errorf("expected 18 definitions, got %d", len(defs))
+	if len(defs) != 19 {
+		t.Errorf("expected 19 definitions, got %d", len(defs))
 	}
 
 	// Check that definitions have required fields

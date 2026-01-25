@@ -59,14 +59,17 @@ type ContextManager struct {
 	contextWindow int
 
 	// Thresholds
-	compactThreshold float64
-	warnThreshold    float64
-	preserveLast     int
+	compactThreshold  float64
+	warnThreshold     float64
+	preserveLast      int
 	enableAutoCompact bool
 
 	// Cached stats
 	cachedTokens int
 	statsDirty   bool
+
+	// Session persistence callback
+	onSave func([]llm.Message)
 }
 
 // NewContextManager creates a new context manager
@@ -88,12 +91,42 @@ func NewContextManager(systemPrompt string, cfg ContextConfig) *ContextManager {
 	}
 }
 
+// SetOnSave sets a callback function that is called after each message is added
+func (cm *ContextManager) SetOnSave(fn func([]llm.Message)) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.onSave = fn
+}
+
 // AddMessage adds a message to the conversation
 func (cm *ContextManager) AddMessage(msg llm.Message) {
 	cm.mu.Lock()
+	cm.messages = append(cm.messages, msg)
+	cm.statsDirty = true
+
+	// Copy messages and callback ref while holding lock
+	var msgsCopy []llm.Message
+	var onSave func([]llm.Message)
+	if cm.onSave != nil {
+		msgsCopy = make([]llm.Message, len(cm.messages))
+		copy(msgsCopy, cm.messages)
+		onSave = cm.onSave
+	}
+	cm.mu.Unlock()
+
+	// Call callback outside of lock to avoid deadlocks
+	if onSave != nil {
+		onSave(msgsCopy)
+	}
+}
+
+// RestoreMessages restores messages from a saved session
+func (cm *ContextManager) RestoreMessages(messages []llm.Message) {
+	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	cm.messages = append(cm.messages, msg)
+	cm.messages = make([]llm.Message, len(messages))
+	copy(cm.messages, messages)
 	cm.statsDirty = true
 }
 

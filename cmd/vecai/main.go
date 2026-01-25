@@ -9,6 +9,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/agent"
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
@@ -18,6 +19,9 @@ import (
 var Version = "dev"
 
 func main() {
+	// Ensure log file is closed on exit
+	defer logger.CloseLogFile()
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -28,11 +32,14 @@ func run() error {
 	// Parse command line args
 	args := os.Args[1:]
 
-	// Handle version flag
+	// Handle version flag (before logging to avoid log file for simple version checks)
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
 		fmt.Printf("vecai version %s\n", Version)
 		return nil
 	}
+
+	// Initialize logging - log session start (after version check to avoid creating logs for --version)
+	logger.Debug("vecai session started, args=%v", args)
 
 	// Handle help flag
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
@@ -124,16 +131,19 @@ func run() error {
 			return fmt.Errorf("plan command requires a goal argument")
 		}
 		goal := args[1]
+		logger.Debug("Entering plan mode with goal: %s", goal)
 		return a.RunPlan(goal)
 	}
 
 	// One-shot mode if query provided
 	if len(args) > 0 {
 		query := joinArgs(args)
+		logger.Debug("One-shot mode with query: %s", query)
 		return a.Run(query)
 	}
 
 	// Interactive mode - use TUI if available, otherwise fall back to line mode
+	logger.Debug("Entering interactive mode")
 	return a.RunInteractiveTUI()
 }
 

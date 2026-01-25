@@ -58,9 +58,6 @@ var (
 	headerModelStyle = lipgloss.NewStyle().
 				Foreground(nord3) // Subtle
 
-	headerStatusStyle = lipgloss.NewStyle().
-				Foreground(nord14) // Success green
-
 	// Footer styles - elevated surface
 	footerStyle = lipgloss.NewStyle().
 			Foreground(nord4).

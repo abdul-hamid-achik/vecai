@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -51,6 +52,7 @@ func NewRegistry() *Registry {
 
 	// Register default tools
 	r.Register(&VecgrepSearchTool{})
+	r.Register(&VecgrepSimilarTool{})
 	r.Register(&VecgrepStatusTool{})
 	r.Register(&ReadFileTool{})
 	r.Register(&WriteFileTool{})
@@ -70,6 +72,11 @@ func NewRegistry() *Registry {
 	r.Register(&GpeekTagsTool{})
 	r.Register(&GpeekChangesBetweenTool{})
 	r.Register(&GpeekConflictCheckTool{})
+
+	// Register web search tool (conditionally if API key available)
+	if os.Getenv("TAVILY_API_KEY") != "" {
+		r.Register(NewWebSearchTool())
+	}
 
 	return r
 }

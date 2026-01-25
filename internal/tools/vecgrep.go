@@ -132,6 +132,145 @@ func formatSearchResults(jsonOutput string) (string, error) {
 	return sb.String(), nil
 }
 
+// VecgrepSimilarTool finds code similar to a given snippet or location
+type VecgrepSimilarTool struct{}
+
+func (t *VecgrepSimilarTool) Name() string {
+	return "vecgrep_similar"
+}
+
+func (t *VecgrepSimilarTool) Description() string {
+	return "Find code similar to a given snippet or file location. Use this to discover related patterns, implementations, or potential duplicates. Provide either 'text' (a code snippet) or 'file_location' (e.g., 'main.go:50')."
+}
+
+func (t *VecgrepSimilarTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"text": map[string]any{
+				"type":        "string",
+				"description": "Code snippet to find similar code for.",
+			},
+			"file_location": map[string]any{
+				"type":        "string",
+				"description": "File:line location to find similar code (e.g., 'internal/agent/agent.go:50').",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Maximum number of results to return (default: 5).",
+				"default":     5,
+			},
+			"exclude_same_file": map[string]any{
+				"type":        "boolean",
+				"description": "Exclude results from the same file (default: true).",
+				"default":     true,
+			},
+			"language": map[string]any{
+				"type":        "string",
+				"description": "Filter results by programming language.",
+			},
+		},
+	}
+}
+
+func (t *VecgrepSimilarTool) Permission() PermissionLevel {
+	return PermissionRead
+}
+
+func (t *VecgrepSimilarTool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	args := []string{"similar"}
+
+	// Either text or file_location must be provided
+	text, hasText := input["text"].(string)
+	fileLoc, hasFileLoc := input["file_location"].(string)
+
+	if !hasText && !hasFileLoc {
+		return "", fmt.Errorf("either 'text' or 'file_location' is required")
+	}
+
+	if hasText && text != "" {
+		args = append(args, "--text", text)
+	} else if hasFileLoc && fileLoc != "" {
+		args = append(args, "--file-location", fileLoc)
+	}
+
+	if limit, ok := input["limit"].(float64); ok {
+		args = append(args, "--limit", fmt.Sprintf("%d", int(limit)))
+	} else {
+		args = append(args, "--limit", "5")
+	}
+
+	// Default to excluding same file
+	excludeSameFile := true
+	if exclude, ok := input["exclude_same_file"].(bool); ok {
+		excludeSameFile = exclude
+	}
+	if excludeSameFile {
+		args = append(args, "--exclude-same-file")
+	}
+
+	if lang, ok := input["language"].(string); ok && lang != "" {
+		args = append(args, "--language", lang)
+	}
+
+	args = append(args, "--format", "json")
+
+	cmd := exec.CommandContext(ctx, "vecgrep", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "not initialized") || strings.Contains(stderr.String(), "no .vecgrep") {
+			return "vecgrep is not initialized for this project. Please run 'vecgrep init' to set up semantic search.", nil
+		}
+		return "", fmt.Errorf("vecgrep similar failed: %s", stderr.String())
+	}
+
+	return formatSimilarResults(stdout.String())
+}
+
+func formatSimilarResults(jsonOutput string) (string, error) {
+	if strings.TrimSpace(jsonOutput) == "" {
+		return "No similar code found.", nil
+	}
+
+	var results []struct {
+		File       string  `json:"file"`
+		StartLine  int     `json:"start_line"`
+		EndLine    int     `json:"end_line"`
+		Language   string  `json:"language"`
+		ChunkType  string  `json:"chunk_type"`
+		Content    string  `json:"content"`
+		Similarity float64 `json:"similarity"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonOutput), &results); err != nil {
+		return jsonOutput, nil
+	}
+
+	if len(results) == 0 {
+		return "No similar code found.", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d similar code patterns:\n\n", len(results)))
+
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("### Similar #%d (%.1f%% similarity)\n", i+1, r.Similarity*100))
+		sb.WriteString(fmt.Sprintf("**File:** %s:%d-%d\n", r.File, r.StartLine, r.EndLine))
+		sb.WriteString(fmt.Sprintf("**Language:** %s | **Type:** %s\n", r.Language, r.ChunkType))
+		sb.WriteString("```" + r.Language + "\n")
+		sb.WriteString(r.Content)
+		if !strings.HasSuffix(r.Content, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("```\n\n")
+	}
+
+	return sb.String(), nil
+}
+
 // VecgrepStatusTool checks vecgrep index status
 type VecgrepStatusTool struct{}
 

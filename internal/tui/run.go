@@ -5,8 +5,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// runLog is a prefixed logger for TUI runner events
+var runLog = logger.WithPrefix("TUI-RUN")
 
 // RunConfig contains configuration for running the TUI
 type RunConfig struct {
@@ -99,23 +103,28 @@ type TUIRunner struct {
 
 // NewTUIRunner creates a new TUI runner
 func NewTUIRunner(modelName string) *TUIRunner {
+	runLog.Debug("NewTUIRunner: creating with model=%s", modelName)
 	streamChan := make(chan StreamMsg, 100)
 	model := NewModel(modelName, streamChan)
+	runLog.Debug("NewTUIRunner: model created, callbacks=%p", model.callbacks)
 
 	program := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+	runLog.Debug("NewTUIRunner: tea.Program created")
 
 	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan)
 
-	return &TUIRunner{
+	runner := &TUIRunner{
 		model:      &model,
 		program:    program,
 		adapter:    adapter,
 		streamChan: streamChan,
 	}
+	runLog.Debug("NewTUIRunner: runner created, model.callbacks=%p", runner.model.callbacks)
+	return runner
 }
 
 // GetAdapter returns the TUI adapter for use as OutputHandler
@@ -130,8 +139,10 @@ func (r *TUIRunner) SetSubmitCallback(fn func(string)) {
 
 // SetOnReady sets a callback to be called when the TUI is ready
 func (r *TUIRunner) SetOnReady(fn func()) {
+	runLog.Debug("SetOnReady: setting callback, model.callbacks=%p", r.model.callbacks)
 	r.onReady = fn
 	r.model.SetOnReady(fn)
+	runLog.Debug("SetOnReady: callback set, model.callbacks.onReady=%v", r.model.callbacks.onReady != nil)
 }
 
 // SetInitialQuery sets a query to execute after TUI is ready
@@ -186,8 +197,12 @@ func (r *TUIRunner) ClearQueue() {
 
 // Run starts the TUI and blocks until it exits
 func (r *TUIRunner) Run() error {
+	runLog.Debug("Run: starting TUI program, model.callbacks=%p, hasOnReady=%v",
+		r.model.callbacks, r.model.callbacks != nil && r.model.callbacks.onReady != nil)
 	if _, err := r.program.Run(); err != nil {
+		runLog.Debug("Run: TUI exited with error: %v", err)
 		return fmt.Errorf("error running TUI: %w", err)
 	}
+	runLog.Debug("Run: TUI exited normally")
 	return nil
 }

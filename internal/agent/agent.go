@@ -1,17 +1,22 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	ctxmgr "github.com/abdul-hamid-achik/vecai/internal/context"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
+	"github.com/abdul-hamid-achik/vecai/internal/session"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 	"github.com/abdul-hamid-achik/vecai/internal/tui"
@@ -23,26 +28,56 @@ var ErrExit = errors.New("user requested exit")
 
 const systemPrompt = `You are vecai, an AI-powered codebase assistant. You help developers understand, navigate, and modify their code.
 
-You have access to the following tools:
-- vecgrep_search: Semantic search across the codebase using vector embeddings
-- vecgrep_status: Check the status of the search index
-- read_file: Read file contents
+## Available Tools
+- vecgrep_search: Semantic search using vector embeddings (PREFERRED for exploration)
+- vecgrep_similar: Find code similar to a snippet or location
+- vecgrep_status: Check search index status
+- read_file: Read file contents (use AFTER vecgrep identifies relevant files)
 - write_file: Write content to a file
 - edit_file: Make targeted edits to a file
 - list_files: List files in a directory
 - bash: Execute shell commands
-- grep: Search for patterns in files
+- grep: Exact pattern matching (literals, identifiers, regex)
 
-Guidelines:
-1. Use vecgrep_search for understanding concepts, finding related code, or exploring the codebase
-2. Use grep for exact string/pattern matching
+## Tool Selection Strategy (CRITICAL)
+
+**ALWAYS use vecgrep_search FIRST for codebase exploration:**
+- "Where is X implemented?" → vecgrep_search("X implementation")
+- "How does Y work?" → vecgrep_search("Y logic flow")
+- "Find code related to Z" → vecgrep_search("Z functionality")
+- "What handles authentication?" → vecgrep_search("authentication handler")
+- "Show me the API endpoints" → vecgrep_search("API endpoint handler")
+
+**Use vecgrep_similar when:**
+- Finding code patterns similar to existing code
+- Discovering duplicate or related implementations
+- Exploring how similar problems are solved elsewhere
+
+**Only use grep when:**
+- Searching for EXACT strings (error messages, constants, specific identifiers)
+- Finding all usages of a known function/variable name
+- Pattern matching with regex where semantics don't matter
+
+**Only use list_files/read_file when:**
+- You already know the exact file path from vecgrep results
+- You need the FULL file context after vecgrep identified it
+- Browsing directory structure (not searching for code)
+
+## Why vecgrep First?
+vecgrep uses semantic embeddings that understand code MEANING, not just text matching.
+- "error handling" finds try/catch, Result types, error returns - even without those exact words
+- "database connection" finds pool setup, connection strings, ORM initialization
+- Much faster than iterating through files with grep
+
+## Guidelines
+1. Start exploration with vecgrep_search - it understands concepts
+2. Use vecgrep results to identify files, then read_file for full context
 3. Always read files before modifying them
 4. Use edit_file for small changes, write_file for new files or complete rewrites
 5. Be concise but thorough in explanations
-6. Show relevant code snippets when explaining
-7. Ask clarifying questions if the request is ambiguous
+6. Ask clarifying questions if the request is ambiguous
 
-When responding:
+## Response Format
 - Format code blocks with language specifiers
 - Use bullet points for lists
 - Reference file paths and line numbers when discussing code`
@@ -70,6 +105,7 @@ type Agent struct {
 	contextMgr  *ctxmgr.ContextManager
 	compactor   *ctxmgr.Compactor
 	planner     *Planner
+	sessionMgr  *session.Manager
 
 	// Track if we've shown the context warning this session
 	shownContextWarning bool
@@ -98,6 +134,13 @@ func New(cfg Config) *Agent {
 		ctxConfig.PreserveLast = 4
 	}
 
+	// Initialize session manager
+	sessionMgr, err := session.NewManager()
+	if err != nil {
+		// Non-fatal: session persistence won't work but agent can still function
+		logger.Warn("Failed to initialize session manager: %v", err)
+	}
+
 	a := &Agent{
 		llm:         cfg.LLM,
 		tools:       cfg.Tools,
@@ -108,17 +151,32 @@ func New(cfg Config) *Agent {
 		config:      cfg.Config,
 		contextMgr:  ctxmgr.NewContextManager(systemPrompt, ctxConfig),
 		compactor:   ctxmgr.NewCompactor(cfg.LLM),
+		sessionMgr:  sessionMgr,
 	}
 	a.planner = NewPlanner(a)
+
+	// Wire up auto-save callback
+	if sessionMgr != nil {
+		a.contextMgr.SetOnSave(func(msgs []llm.Message) {
+			if err := a.sessionMgr.Save(msgs, a.llm.GetModel()); err != nil {
+				logger.Warn("Failed to save session: %v", err)
+			}
+		})
+	}
+
 	return a
 }
 
 // Run executes a single query (uses TUI if available, otherwise line-based)
 func (a *Agent) Run(query string) error {
 	// Use TUI if available for consistent experience
-	if tui.IsTTYAvailable() {
+	isTTY := tui.IsTTYAvailable()
+	logger.Debug("Run: query=%q, isTTY=%v", query, isTTY)
+	if isTTY {
+		logger.Debug("Run: using TUI mode")
 		return a.RunTUI(query, false) // Single query, don't stay open
 	}
+	logger.Debug("Run: using line-based mode (no TTY)")
 	return a.runLineBased(query)
 }
 
@@ -145,33 +203,44 @@ func (a *Agent) runLineBased(query string) error {
 // initialQuery: optional query to execute immediately after TUI is ready
 // interactive: if true, stay open for follow-up queries; if false, quit after initial query
 func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
+	logger.Debug("RunTUI called: query=%q, interactive=%v", initialQuery, interactive)
+
 	// Create TUI runner
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
+	logger.Debug("TUI runner created")
 
 	// Track completion for single-query mode
 	done := make(chan error, 1)
 
 	// Set up the onReady callback to execute initial query
 	if initialQuery != "" {
+		logger.Debug("Setting up onReady callback for initial query")
 		runner.SetOnReady(func() {
+			logger.Debug("onReady callback triggered - starting query execution goroutine")
 			go func() {
+				logger.Debug("Query execution goroutine started")
 				// Add user message block first
 				adapter.Info("> " + initialQuery)
 
 				// Execute the query
+				logger.Debug("Calling runWithTUIOutput")
 				err := a.runWithTUIOutput(initialQuery, adapter)
 				if err != nil {
+					logger.Debug("Query execution error: %v", err)
 					adapter.Error(err)
 				}
+				logger.Debug("Query execution complete")
 
 				// If not interactive, quit after query completes
 				if !interactive {
+					logger.Debug("Single-query mode - sending done signal and quitting")
 					done <- err
 					runner.Quit()
 				}
 			}()
 		})
+		logger.Debug("onReady callback registered")
 	}
 
 	// Set up submit callback for follow-up queries
@@ -207,10 +276,7 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 		a.checkVecgrepStatusTUI(adapter)
 	}
 
-	// Send welcome message (only for interactive mode without initial query)
-	if interactive && initialQuery == "" {
-		runner.SendInfo("vecai - Interactive Mode")
-	}
+	// Header already shows "vecai" and model - no need for welcome message
 
 	// Run TUI - this blocks until quit
 	if err := runner.Run(); err != nil {
@@ -272,8 +338,79 @@ func (a *Agent) RunInteractiveTUI() error {
 		return a.RunInteractive()
 	}
 
-	// Use unified TUI method with no initial query, interactive mode
-	return a.RunTUI("", true)
+	// Check for existing session to show hint (non-blocking)
+	var pendingSession *session.Session
+	if a.sessionMgr != nil {
+		if sess, err := a.sessionMgr.GetCurrent(); err == nil && sess != nil && len(sess.Messages) > 0 {
+			pendingSession = sess
+		}
+	}
+
+	// Create TUI runner
+	runner := tui.NewTUIRunner(a.llm.GetModel())
+	adapter := runner.GetAdapter()
+
+	// Set up the onReady callback
+	runner.SetOnReady(func() {
+		// Show non-blocking session hint if available
+		if pendingSession != nil {
+			preview := ""
+			for _, msg := range pendingSession.Messages {
+				if msg.Role == "user" {
+					preview = msg.Content
+					if len(preview) > 40 {
+						preview = preview[:37] + "..."
+					}
+					break
+				}
+			}
+			// Show session ID in header (dimmed since not yet active)
+			adapter.SetSessionID(pendingSession.ID[:8] + "?")
+			adapter.Info(fmt.Sprintf("Session available (%d msgs): \"%s\" - /resume to continue",
+				len(pendingSession.Messages), preview))
+		}
+	})
+
+	// Set up submit callback for follow-up queries
+	runner.SetSubmitCallback(func(input string) {
+		input = strings.TrimSpace(input)
+		if input == "" {
+			adapter.StreamDone()
+			return
+		}
+
+		// Handle slash commands
+		if strings.HasPrefix(input, "/") {
+			if !a.handleSlashCommandTUI(input, runner) {
+				runner.Quit()
+				return
+			}
+			adapter.StreamDone()
+			return
+		}
+
+		// Starting fresh query - ensure we have a session
+		if a.sessionMgr != nil && a.sessionMgr.GetCurrentSession() == nil {
+			if sess, err := a.sessionMgr.StartNew(); err != nil {
+				adapter.Warning("Failed to start session: " + err.Error())
+			} else {
+				adapter.SetSessionID(sess.ID[:8])
+			}
+		}
+
+		// Run query with TUI output
+		err := a.runWithTUIOutput(input, adapter)
+		if err != nil {
+			adapter.Error(err)
+			adapter.StreamDone()
+		}
+	})
+
+	// Check vecgrep status on startup
+	a.checkVecgrepStatusTUI(adapter)
+
+	// Run TUI - this blocks until quit
+	return runner.Run()
 }
 
 // runWithTUIOutput runs a query using the TUI adapter for output
@@ -352,46 +489,52 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		var toolCalls []llm.ToolCall
 		interrupted := false
 
-		// Process stream
+		// Process stream - use select to race between chunks and context cancellation
 	streamLoop:
-		for chunk := range stream {
-			// Check for cancellation during streaming
+		for {
 			select {
 			case <-runCtx.Done():
+				// Context cancelled (ESC pressed) - exit immediately
 				interrupted = true
 				break streamLoop
-			default:
-			}
 
-			switch chunk.Type {
-			case "text":
-				adapter.StreamText(chunk.Text)
-				textContent.WriteString(chunk.Text)
-
-			case "thinking":
-				adapter.StreamThinking(chunk.Text)
-
-			case "tool_call":
-				if chunk.ToolCall != nil {
-					toolCalls = append(toolCalls, *chunk.ToolCall)
+			case chunk, ok := <-stream:
+				if !ok {
+					// Channel closed, stream ended
+					break streamLoop
 				}
 
-			case "done":
-				// Pass usage data if available
-				if chunk.Usage != nil {
-					adapter.StreamDoneWithUsage(chunk.Usage.InputTokens, chunk.Usage.OutputTokens)
-				} else {
-					adapter.StreamDone()
-				}
+				switch chunk.Type {
+				case "text":
+					adapter.StreamText(chunk.Text)
+					textContent.WriteString(chunk.Text)
 
-			case "error":
-				if chunk.Error != nil {
-					// Check if error is due to context cancellation
-					if runCtx.Err() != nil {
-						interrupted = true
-						break streamLoop
+				case "thinking":
+					adapter.StreamThinking(chunk.Text)
+
+				case "tool_call":
+					if chunk.ToolCall != nil {
+						toolCalls = append(toolCalls, *chunk.ToolCall)
 					}
-					return chunk.Error
+
+				case "done":
+					// Pass usage data if available
+					if chunk.Usage != nil {
+						adapter.StreamDoneWithUsage(chunk.Usage.InputTokens, chunk.Usage.OutputTokens)
+					} else {
+						adapter.StreamDone()
+					}
+
+				case "error":
+					if chunk.Error != nil {
+						// Check if error is due to context cancellation
+						if runCtx.Err() != nil {
+							interrupted = true
+							break streamLoop
+						}
+						adapter.StreamDone() // Reset TUI state before returning error
+						return chunk.Error
+					}
 				}
 			}
 		}
@@ -646,8 +789,14 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.SendInfo("  /plan <goal>     Enter plan mode")
 		runner.SendInfo("  /skills          List available skills")
 		runner.SendInfo("  /status          Check vecgrep status")
+		runner.SendInfo("  /reindex         Update vecgrep search index")
 		runner.SendInfo("  /context         Show context usage breakdown")
 		runner.SendInfo("  /compact [focus] Compact conversation (optional focus)")
+		runner.SendInfo("  /sessions        List saved sessions")
+		runner.SendInfo("  /resume [id]     Resume a session (last if no id)")
+		runner.SendInfo("  /new             Start a new session")
+		runner.SendInfo("  /delete <id>     Delete a session")
+		runner.SendInfo("  /debug <on|off>  Toggle debug logging")
 		runner.SendInfo("  /clear           Clear conversation")
 		runner.SendInfo("  /exit            Exit interactive mode")
 		return true
@@ -738,6 +887,194 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		a.checkVecgrepStatusTUI(runner.GetAdapter())
 		return true
 
+	case "/reindex":
+		runner.SendInfo("Reindexing codebase with vecgrep...")
+		ctx := context.Background()
+		result, err := a.reindexVecgrep(ctx)
+		if err != nil {
+			runner.SendError("Reindex failed: " + err.Error())
+		} else {
+			runner.SendSuccess(result)
+		}
+		return true
+
+	case "/debug":
+		if len(parts) < 2 {
+			runner.SendInfo("Usage: /debug <on|off>")
+			return true
+		}
+		switch parts[1] {
+		case "on":
+			logger.SetLevel(logger.LevelDebug)
+			runner.SendSuccess("Debug logging enabled")
+		case "off":
+			logger.SetLevel(logger.LevelInfo)
+			runner.SendSuccess("Debug logging disabled")
+		default:
+			runner.SendError("Usage: /debug <on|off>")
+		}
+		return true
+
+	case "/sessions":
+		if a.sessionMgr == nil {
+			runner.SendError("Session manager not available")
+			return true
+		}
+		sessions, err := a.sessionMgr.List()
+		if err != nil {
+			runner.SendError("Failed to list sessions: " + err.Error())
+			return true
+		}
+		if len(sessions) == 0 {
+			runner.SendInfo("No saved sessions")
+			return true
+		}
+		runner.SendInfo("Saved sessions:")
+		for _, s := range sessions {
+			bullet := "○"
+			suffix := ""
+			if curr := a.sessionMgr.GetCurrentSession(); curr != nil && curr.ID == s.ID {
+				bullet = "●"
+				suffix = " ← current"
+			}
+			relTime := session.FormatRelativeTime(s.UpdatedAt)
+			preview := s.Preview
+			if len(preview) > 35 {
+				preview = preview[:32] + "..."
+			}
+			if preview != "" {
+				preview = fmt.Sprintf(" \"%s\"", preview)
+			}
+			runner.SendInfo(fmt.Sprintf("  %s %s  %-8s  %2d msgs%s%s",
+				bullet, s.ID[:8], relTime, s.MsgCount, preview, suffix))
+		}
+		return true
+
+	case "/resume":
+		if a.sessionMgr == nil {
+			runner.SendError("Session manager not available")
+			return true
+		}
+		var sess *session.Session
+		var err error
+		if len(parts) > 1 {
+			// Resume specific session by ID prefix
+			sessions, listErr := a.sessionMgr.List()
+			if listErr != nil {
+				runner.SendError("Failed to list sessions: " + listErr.Error())
+				return true
+			}
+			prefix := parts[1]
+			for _, s := range sessions {
+				if strings.HasPrefix(s.ID, prefix) {
+					sess, err = a.sessionMgr.Load(s.ID)
+					break
+				}
+			}
+			if sess == nil && err == nil {
+				runner.SendError("No session found with prefix: " + prefix)
+				return true
+			}
+		} else {
+			// Resume last session
+			sess, err = a.sessionMgr.GetCurrent()
+		}
+		if err != nil {
+			runner.SendError("Failed to load session: " + err.Error())
+			return true
+		}
+		if sess == nil {
+			runner.SendInfo("No session to resume")
+			return true
+		}
+		a.contextMgr.RestoreMessages(sess.Messages)
+		a.sessionMgr.SetCurrent(sess)
+		runner.GetAdapter().SetSessionID(sess.ID[:8])
+		runner.SendSuccess(fmt.Sprintf("Resumed session %s (%d messages)", sess.ID[:8], len(sess.Messages)))
+		// Show last exchange as context
+		if len(sess.Messages) > 0 {
+			for i := len(sess.Messages) - 1; i >= 0; i-- {
+				if sess.Messages[i].Role == "user" {
+					lastMsg := sess.Messages[i].Content
+					if len(lastMsg) > 60 {
+						lastMsg = lastMsg[:57] + "..."
+					}
+					runner.SendInfo(fmt.Sprintf("Last message: \"%s\"", lastMsg))
+					break
+				}
+			}
+		}
+		return true
+
+	case "/new":
+		if a.sessionMgr == nil {
+			runner.SendError("Session manager not available")
+			return true
+		}
+		// Current session is already saved via auto-save, just start fresh
+		a.contextMgr.Clear()
+		a.shownContextWarning = false
+		sess, err := a.sessionMgr.StartNew()
+		if err != nil {
+			runner.SendError("Failed to start new session: " + err.Error())
+			return true
+		}
+		runner.GetAdapter().Clear()
+		runner.ClearQueue()
+		runner.GetAdapter().SetSessionID(sess.ID[:8])
+		runner.SendSuccess(fmt.Sprintf("Started new session (%s)", sess.ID[:8]))
+		return true
+
+	case "/delete":
+		if a.sessionMgr == nil {
+			runner.SendError("Session manager not available")
+			return true
+		}
+		if len(parts) < 2 {
+			runner.SendError("Usage: /delete <session-id> [--force]")
+			return true
+		}
+		// Check for --force flag
+		forceDelete := false
+		prefix := parts[1]
+		if len(parts) > 2 && parts[2] == "--force" {
+			forceDelete = true
+		}
+		// Find session by prefix
+		sessions, err := a.sessionMgr.List()
+		if err != nil {
+			runner.SendError("Failed to list sessions: " + err.Error())
+			return true
+		}
+		var found string
+		for _, s := range sessions {
+			if strings.HasPrefix(s.ID, prefix) {
+				found = s.ID
+				break
+			}
+		}
+		if found == "" {
+			runner.SendError("No session found with prefix: " + prefix)
+			return true
+		}
+		// Check if deleting current session
+		if curr := a.sessionMgr.GetCurrentSession(); curr != nil && curr.ID == found {
+			if !forceDelete {
+				runner.SendWarning(fmt.Sprintf("Session %s is currently active", found[:8]))
+				runner.SendInfo("Use /delete " + prefix + " --force to confirm")
+				return true
+			}
+			// Clear context since we're deleting current session
+			a.contextMgr.Clear()
+			a.shownContextWarning = false
+		}
+		if err := a.sessionMgr.Delete(found); err != nil {
+			runner.SendError("Failed to delete session: " + err.Error())
+			return true
+		}
+		runner.SendSuccess(fmt.Sprintf("Deleted session %s", found[:8]))
+		return true
+
 	default:
 		runner.SendError("Unknown command: " + parts[0] + ". Type /help for available commands.")
 		return true
@@ -747,6 +1084,15 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 // checkVecgrepStatusTUI checks vecgrep status with TUI output
 func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
 	ctx := context.Background()
+
+	// Check for stale files
+	staleCount := a.getVecgrepStaleCount(ctx)
+	if staleCount > 0 {
+		adapter.Warning(fmt.Sprintf("vecgrep index has %d modified files. Run /reindex for best search results.", staleCount))
+		return
+	}
+
+	// Check if initialized
 	tool, _ := a.tools.Get("vecgrep_status")
 	result, err := tool.Execute(ctx, map[string]any{})
 	if err != nil {
@@ -756,9 +1102,55 @@ func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
 
 	if strings.Contains(result, "not initialized") {
 		adapter.Warning("vecgrep is not initialized. Run 'vecgrep init' for semantic search.")
-	} else {
-		adapter.Info("vecgrep index is ready")
 	}
+	// Don't show "vecgrep index is ready" - it clutters the viewport with no ongoing value
+}
+
+// getVecgrepStaleCount returns the number of files that need reindexing
+func (a *Agent) getVecgrepStaleCount(ctx context.Context) int {
+	cmd := exec.CommandContext(ctx, "vecgrep", "status", "--format", "json")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return 0 // Silently fail - don't interrupt startup
+	}
+
+	// Parse JSON to get reindex stats
+	var status struct {
+		ReindexStatus struct {
+			NewFiles      int `json:"new_files"`
+			ModifiedFiles int `json:"modified_files"`
+		} `json:"reindex_status"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		return 0
+	}
+
+	return status.ReindexStatus.NewFiles + status.ReindexStatus.ModifiedFiles
+}
+
+// reindexVecgrep triggers a vecgrep index update
+func (a *Agent) reindexVecgrep(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "vecgrep", "index")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "not initialized") {
+			return "", fmt.Errorf("vecgrep not initialized. Run 'vecgrep init' first")
+		}
+		return "", fmt.Errorf("%s", stderr.String())
+	}
+
+	// Parse output to get stats
+	output := stdout.String()
+	if output == "" {
+		output = "Index updated successfully"
+	}
+	return output, nil
 }
 
 // IsTTY checks if stdout is a terminal
@@ -869,6 +1261,145 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 
 	case "/status":
 		a.checkVecgrepStatus()
+		return true
+
+	case "/sessions":
+		if a.sessionMgr == nil {
+			a.output.ErrorStr("Session manager not available")
+			return true
+		}
+		sessions, err := a.sessionMgr.List()
+		if err != nil {
+			a.output.ErrorStr("Failed to list sessions: " + err.Error())
+			return true
+		}
+		if len(sessions) == 0 {
+			a.output.Info("No saved sessions")
+			return true
+		}
+		a.output.Header("Saved Sessions")
+		for _, s := range sessions {
+			bullet := "○"
+			suffix := ""
+			if curr := a.sessionMgr.GetCurrentSession(); curr != nil && curr.ID == s.ID {
+				bullet = "●"
+				suffix = " ← current"
+			}
+			relTime := session.FormatRelativeTime(s.UpdatedAt)
+			preview := s.Preview
+			if len(preview) > 35 {
+				preview = preview[:32] + "..."
+			}
+			if preview != "" {
+				preview = fmt.Sprintf(" \"%s\"", preview)
+			}
+			a.output.TextLn(fmt.Sprintf("  %s %s  %-8s  %2d msgs%s%s",
+				bullet, s.ID[:8], relTime, s.MsgCount, preview, suffix))
+		}
+		return true
+
+	case "/resume":
+		if a.sessionMgr == nil {
+			a.output.ErrorStr("Session manager not available")
+			return true
+		}
+		var sess *session.Session
+		var err error
+		if len(parts) > 1 {
+			sessions, listErr := a.sessionMgr.List()
+			if listErr != nil {
+				a.output.ErrorStr("Failed to list sessions: " + listErr.Error())
+				return true
+			}
+			prefix := parts[1]
+			for _, s := range sessions {
+				if strings.HasPrefix(s.ID, prefix) {
+					sess, err = a.sessionMgr.Load(s.ID)
+					break
+				}
+			}
+			if sess == nil && err == nil {
+				a.output.ErrorStr("No session found with prefix: " + prefix)
+				return true
+			}
+		} else {
+			sess, err = a.sessionMgr.GetCurrent()
+		}
+		if err != nil {
+			a.output.ErrorStr("Failed to load session: " + err.Error())
+			return true
+		}
+		if sess == nil {
+			a.output.Info("No session to resume")
+			return true
+		}
+		a.contextMgr.RestoreMessages(sess.Messages)
+		a.sessionMgr.SetCurrent(sess)
+		a.output.Success(fmt.Sprintf("Resumed session %s (%d messages)", sess.ID[:8], len(sess.Messages)))
+		return true
+
+	case "/new":
+		if a.sessionMgr == nil {
+			a.output.ErrorStr("Session manager not available")
+			return true
+		}
+		a.contextMgr.Clear()
+		a.shownContextWarning = false
+		a.input.Clear()
+		if _, err := a.sessionMgr.StartNew(); err != nil {
+			a.output.ErrorStr("Failed to start new session: " + err.Error())
+			return true
+		}
+		a.output.Success("Started new session")
+		return true
+
+	case "/delete":
+		if a.sessionMgr == nil {
+			a.output.ErrorStr("Session manager not available")
+			return true
+		}
+		if len(parts) < 2 {
+			a.output.ErrorStr("Usage: /delete <session-id> [--force]")
+			return true
+		}
+		// Check for --force flag
+		forceDelete := false
+		prefix := parts[1]
+		if len(parts) > 2 && parts[2] == "--force" {
+			forceDelete = true
+		}
+		sessions, err := a.sessionMgr.List()
+		if err != nil {
+			a.output.ErrorStr("Failed to list sessions: " + err.Error())
+			return true
+		}
+		var found string
+		for _, s := range sessions {
+			if strings.HasPrefix(s.ID, prefix) {
+				found = s.ID
+				break
+			}
+		}
+		if found == "" {
+			a.output.ErrorStr("No session found with prefix: " + prefix)
+			return true
+		}
+		// Check if deleting current session
+		if curr := a.sessionMgr.GetCurrentSession(); curr != nil && curr.ID == found {
+			if !forceDelete {
+				a.output.Warning(fmt.Sprintf("Session %s is currently active", found[:8]))
+				a.output.TextLn("Use /delete " + prefix + " --force to confirm")
+				return true
+			}
+			// Clear context since we're deleting current session
+			a.contextMgr.Clear()
+			a.shownContextWarning = false
+		}
+		if err := a.sessionMgr.Delete(found); err != nil {
+			a.output.ErrorStr("Failed to delete session: " + err.Error())
+			return true
+		}
+		a.output.Success(fmt.Sprintf("Deleted session %s", found[:8]))
 		return true
 
 	default:
@@ -1115,9 +1646,8 @@ func (a *Agent) checkVecgrepStatus() {
 
 	if strings.Contains(result, "not initialized") {
 		a.output.Warning("vecgrep is not initialized. Run 'vecgrep init' for semantic search.")
-	} else {
-		a.output.Info("vecgrep index is ready")
 	}
+	// Don't show "vecgrep index is ready" - it clutters the output with no ongoing value
 }
 
 // showHelp displays help information
@@ -1128,8 +1658,13 @@ func (a *Agent) showHelp() {
 	a.output.TextLn("/plan <goal>     Enter plan mode")
 	a.output.TextLn("/skills          List available skills")
 	a.output.TextLn("/status          Check vecgrep status")
+	a.output.TextLn("/reindex         Update vecgrep search index")
 	a.output.TextLn("/context         Show context usage breakdown")
 	a.output.TextLn("/compact [focus] Compact conversation (optional focus prompt)")
+	a.output.TextLn("/sessions        List saved sessions")
+	a.output.TextLn("/resume [id]     Resume a session (last if no id)")
+	a.output.TextLn("/new             Start a new session")
+	a.output.TextLn("/delete <id>     Delete a session")
 	a.output.TextLn("/clear           Clear conversation")
 	a.output.TextLn("/exit            Exit interactive mode")
 }

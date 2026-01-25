@@ -238,6 +238,11 @@ func (a *TUIAdapter) UpdateContextStats(usagePercent float64, usedTokens, contex
 	})
 }
 
+// SetSessionID updates the session ID display in the header
+func (a *TUIAdapter) SetSessionID(sessionID string) {
+	a.streamChan <- NewSessionIDMsg(sessionID)
+}
+
 // WaitForRateLimit implements a TUI-compatible wait callback for rate limiting.
 // It sends countdown updates through the TUI channel instead of writing to stderr.
 func (a *TUIAdapter) WaitForRateLimit(ctx context.Context, duration time.Duration, reason string, attempt, maxAttempts int) error {

@@ -37,7 +37,7 @@ func TestGetModel(t *testing.T) {
 		tier     ModelTier
 		expected string
 	}{
-		{TierFast, "claude-haiku-4-5-20251015"},
+		{TierFast, "claude-haiku-4-5-20251001"},
 		{TierSmart, "claude-sonnet-4-5-20250929"},
 		{TierGenius, "claude-opus-4-5-20251101"},
 		{ModelTier("unknown"), "claude-sonnet-4-5-20250929"}, // default fallback
@@ -57,7 +57,7 @@ func TestGetDefaultModel(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultTier = TierFast
 
-	expected := "claude-haiku-4-5-20251015"
+	expected := "claude-haiku-4-5-20251001"
 	if got := cfg.GetDefaultModel(); got != expected {
 		t.Errorf("GetDefaultModel() = %s, want %s", got, expected)
 	}

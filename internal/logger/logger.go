@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -43,6 +44,55 @@ type Logger struct {
 
 // global default logger
 var defaultLogger = New(os.Stderr, LevelInfo, "")
+
+// fileLogger writes all logs to a file regardless of level
+var fileLogger *Logger
+var fileLoggerOnce sync.Once
+var logFile *os.File
+
+// initFileLogger initializes the file logger (called once)
+func initFileLogger() {
+	// Get absolute path for logs directory
+	cwd, _ := os.Getwd()
+	logDir := filepath.Join(cwd, ".vecai", "logs")
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return
+	}
+
+	// Create session log file with timestamp
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	logPath := filepath.Join(logDir, fmt.Sprintf("session_%s.log", timestamp))
+
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	logFile = f
+	fileLogger = New(f, LevelDebug, "") // Always log everything to file
+
+	// Write initial log entry (ignore errors - best effort logging)
+	_, _ = fmt.Fprintf(f, "=== Session started at %s ===\n", time.Now().Format("2006-01-02 15:04:05"))
+	_, _ = fmt.Fprintf(f, "Working directory: %s\n", cwd)
+
+	// Also create/update a symlink to the latest log (ignore errors - symlink is optional)
+	latestPath := filepath.Join(logDir, "latest.log")
+	_ = os.Remove(latestPath) // Remove old symlink
+	_ = os.Symlink(filepath.Base(logPath), latestPath)
+}
+
+// getFileLogger returns the file logger, initializing if needed
+func getFileLogger() *Logger {
+	fileLoggerOnce.Do(initFileLogger)
+	return fileLogger
+}
+
+// CloseLogFile closes the log file (call on shutdown)
+func CloseLogFile() {
+	if logFile != nil {
+		_ = logFile.Close()
+	}
+}
 
 // New creates a new logger
 func New(output io.Writer, minLevel Level, prefix string) *Logger {
@@ -129,21 +179,34 @@ func (l *Logger) Error(format string, args ...any) {
 // Debug logs a debug message
 func Debug(format string, args ...any) {
 	defaultLogger.Debug(format, args...)
+	// Always log to file regardless of console level
+	if fl := getFileLogger(); fl != nil {
+		fl.Debug(format, args...)
+	}
 }
 
 // Info logs an info message
 func Info(format string, args ...any) {
 	defaultLogger.Info(format, args...)
+	if fl := getFileLogger(); fl != nil {
+		fl.Info(format, args...)
+	}
 }
 
 // Warn logs a warning message
 func Warn(format string, args ...any) {
 	defaultLogger.Warn(format, args...)
+	if fl := getFileLogger(); fl != nil {
+		fl.Warn(format, args...)
+	}
 }
 
 // Error logs an error message
 func Error(format string, args ...any) {
 	defaultLogger.Error(format, args...)
+	if fl := getFileLogger(); fl != nil {
+		fl.Error(format, args...)
+	}
 }
 
 // Enabled returns true if the given level would be logged
