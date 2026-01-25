@@ -53,7 +53,7 @@ func TestWebSearchTool_InputSchema(t *testing.T) {
 
 func TestWebSearchTool_Execute_MissingAPIKey(t *testing.T) {
 	// Ensure API key is not set
-	os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Unsetenv("TAVILY_API_KEY")
 
 	tool := NewWebSearchTool()
 	_, err := tool.Execute(context.Background(), map[string]any{
@@ -69,8 +69,8 @@ func TestWebSearchTool_Execute_MissingAPIKey(t *testing.T) {
 }
 
 func TestWebSearchTool_Execute_MissingQuery(t *testing.T) {
-	os.Setenv("TAVILY_API_KEY", "test-key")
-	defer os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Setenv("TAVILY_API_KEY", "test-key")
+	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
 
 	tool := NewWebSearchTool()
 	_, err := tool.Execute(context.Background(), map[string]any{})
@@ -84,8 +84,8 @@ func TestWebSearchTool_Execute_MissingQuery(t *testing.T) {
 }
 
 func TestWebSearchTool_Execute_EmptyQuery(t *testing.T) {
-	os.Setenv("TAVILY_API_KEY", "test-key")
-	defer os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Setenv("TAVILY_API_KEY", "test-key")
+	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
 
 	tool := NewWebSearchTool()
 	_, err := tool.Execute(context.Background(), map[string]any{
@@ -142,12 +142,12 @@ func TestWebSearchTool_Execute_WithMockServer(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
-	os.Setenv("TAVILY_API_KEY", "test-key")
-	defer os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Setenv("TAVILY_API_KEY", "test-key")
+	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
 
 	// Create tool with custom client pointing to mock server
 	tool := &WebSearchTool{
@@ -231,8 +231,8 @@ func TestFormatWebSearchResults_LongContent(t *testing.T) {
 }
 
 func TestWebSearchTool_Execute_MaxResultsBounds(t *testing.T) {
-	os.Setenv("TAVILY_API_KEY", "test-key")
-	defer os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Setenv("TAVILY_API_KEY", "test-key")
+	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
 
 	tool := NewWebSearchTool()
 
@@ -262,15 +262,15 @@ func TestWebSearchTool_Execute_MaxResultsBounds(t *testing.T) {
 
 func TestRegistryWebSearchConditional(t *testing.T) {
 	// Test without API key - web_search should NOT be registered
-	os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Unsetenv("TAVILY_API_KEY")
 	r := NewRegistry()
 	if _, ok := r.Get("web_search"); ok {
 		t.Error("web_search should not be registered without TAVILY_API_KEY")
 	}
 
 	// Test with API key - web_search should be registered
-	os.Setenv("TAVILY_API_KEY", "test-key")
-	defer os.Unsetenv("TAVILY_API_KEY")
+	_ = os.Setenv("TAVILY_API_KEY", "test-key")
+	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
 	r = NewRegistry()
 	if _, ok := r.Get("web_search"); !ok {
 		t.Error("web_search should be registered when TAVILY_API_KEY is set")

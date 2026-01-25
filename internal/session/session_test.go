@@ -15,7 +15,7 @@ func TestManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create manager with custom directory
 	mgr := &Manager{dir: tmpDir}
@@ -67,8 +67,8 @@ func TestManager(t *testing.T) {
 	t.Run("List", func(t *testing.T) {
 		// Create a few sessions
 		for i := 0; i < 3; i++ {
-			mgr.StartNew()
-			mgr.Save([]llm.Message{{Role: "user", Content: "Test"}}, "test-model")
+			_, _ = mgr.StartNew()
+			_ = mgr.Save([]llm.Message{{Role: "user", Content: "Test"}}, "test-model")
 			time.Sleep(10 * time.Millisecond) // Ensure different timestamps
 		}
 
@@ -89,7 +89,7 @@ func TestManager(t *testing.T) {
 
 	t.Run("Delete", func(t *testing.T) {
 		sess, _ := mgr.StartNew()
-		mgr.Save([]llm.Message{{Role: "user", Content: "To delete"}}, "test")
+		_ = mgr.Save([]llm.Message{{Role: "user", Content: "To delete"}}, "test")
 
 		err := mgr.Delete(sess.ID)
 		if err != nil {
@@ -105,7 +105,7 @@ func TestManager(t *testing.T) {
 
 	t.Run("GetCurrent with symlink", func(t *testing.T) {
 		sess, _ := mgr.StartNew()
-		mgr.Save([]llm.Message{{Role: "user", Content: "Current"}}, "test")
+		_ = mgr.Save([]llm.Message{{Role: "user", Content: "Current"}}, "test")
 
 		current, err := mgr.GetCurrent()
 		if err != nil {
