@@ -12,9 +12,10 @@ import (
 type Mode int
 
 const (
-	ModeAsk    Mode = iota // Prompt for write/execute, auto-approve reads
-	ModeAuto               // Approve everything automatically
-	ModeStrict             // Prompt for everything including reads
+	ModeAsk      Mode = iota // Prompt for write/execute, auto-approve reads
+	ModeAuto                 // Approve everything automatically
+	ModeStrict               // Prompt for everything including reads
+	ModeAnalysis             // Analysis mode: auto-approve reads, block writes/executes
 )
 
 func (m Mode) String() string {
@@ -25,6 +26,8 @@ func (m Mode) String() string {
 		return "auto"
 	case ModeStrict:
 		return "strict"
+	case ModeAnalysis:
+		return "analysis"
 	default:
 		return "unknown"
 	}
@@ -74,6 +77,15 @@ func (p *Policy) Check(toolName string, level tools.PermissionLevel, description
 	// Auto mode always allows
 	if p.mode == ModeAuto {
 		return true, nil
+	}
+
+	// Analysis mode: auto-approve reads, block writes/executes (no prompts)
+	if p.mode == ModeAnalysis {
+		if level == tools.PermissionRead {
+			return true, nil
+		}
+		// Block writes and executes in analysis mode
+		return false, nil
 	}
 
 	// Check cache first

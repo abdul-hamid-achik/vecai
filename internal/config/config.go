@@ -36,6 +36,14 @@ type ContextConfig struct {
 	ContextWindow        int     `yaml:"context_window"`         // Context window size in tokens (default: 200000)
 }
 
+// AnalysisConfig holds configuration for token-efficient analysis mode
+type AnalysisConfig struct {
+	Enabled            bool `yaml:"enabled"`              // Enable analysis mode by default
+	MaxFileTokens      int  `yaml:"max_file_tokens"`      // Max tokens per file read (default: 2000)
+	AggressiveCompact  bool `yaml:"aggressive_compaction"` // Use aggressive compaction thresholds
+	SmartToolSelection bool `yaml:"smart_tool_selection"` // Enable on-demand tool loading
+}
+
 // Config holds the application configuration
 type Config struct {
 	APIKey      string          `yaml:"-"` // From environment only
@@ -46,6 +54,7 @@ type Config struct {
 	VecgrepPath string          `yaml:"vecgrep_path"`
 	RateLimit   RateLimitConfig `yaml:"rate_limit"`
 	Context     ContextConfig   `yaml:"context"`
+	Analysis    AnalysisConfig  `yaml:"analysis"`
 
 	// Internal: where config was loaded from
 	configPath string
@@ -72,6 +81,12 @@ func DefaultConfig() *Config {
 			PreserveLast:         4,
 			EnableAutoCompact:    true,
 			ContextWindow:        200000,
+		},
+		Analysis: AnalysisConfig{
+			Enabled:            false,
+			MaxFileTokens:      2000,
+			AggressiveCompact:  true,
+			SmartToolSelection: true,
 		},
 	}
 }

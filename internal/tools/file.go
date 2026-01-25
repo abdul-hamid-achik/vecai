@@ -16,7 +16,7 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file. Use this to examine code, configuration files, or any text file."
+	return "Read the contents of a file. Use this to examine code, configuration files, or any text file. Large files are automatically chunked to save tokens."
 }
 
 func (t *ReadFileTool) InputSchema() map[string]any {
@@ -35,6 +35,10 @@ func (t *ReadFileTool) InputSchema() map[string]any {
 				"type":        "integer",
 				"description": "Optional: Stop reading at this line number (inclusive).",
 			},
+			"max_tokens": map[string]any{
+				"type":        "integer",
+				"description": "Optional: Maximum tokens to return (default: 2000, set to 0 for unlimited). Large files are chunked with a summary.",
+			},
 		},
 		"required": []string{"path"},
 	}
@@ -43,6 +47,12 @@ func (t *ReadFileTool) InputSchema() map[string]any {
 func (t *ReadFileTool) Permission() PermissionLevel {
 	return PermissionRead
 }
+
+// DefaultMaxFileTokens is the default token limit for file reads (roughly 8000 chars)
+const DefaultMaxFileTokens = 2000
+
+// ChunkPreviewLines is the number of lines to show in chunked preview
+const ChunkPreviewLines = 50
 
 func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (string, error) {
 	path, ok := input["path"].(string)
@@ -75,6 +85,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 
+	// Get max tokens limit (default: 2000)
+	maxTokens := DefaultMaxFileTokens
+	if mt, ok := input["max_tokens"].(float64); ok && mt > 0 {
+		maxTokens = int(mt)
+	} else if mt, ok := input["max_tokens"].(float64); ok && mt == 0 {
+		maxTokens = 0 // Unlimited
+	}
+
 	// Handle line range if specified
 	startLine, hasStart := input["start_line"].(float64)
 	endLine, hasEnd := input["end_line"].(float64)
@@ -98,12 +116,62 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 		// Format with line numbers
 		var sb strings.Builder
 		for i := start; i < end && i < len(lines); i++ {
-			sb.WriteString(fmt.Sprintf("%4d | %s\n", i+1, lines[i]))
+			fmt.Fprintf(&sb, "%4d | %s\n", i+1, lines[i])
 		}
 		return sb.String(), nil
 	}
 
+	// Apply token-based chunking if file is large
+	if maxTokens > 0 {
+		// Estimate tokens: ~4 chars per token
+		estimatedTokens := len(content) / 4
+		if estimatedTokens > maxTokens {
+			return t.chunkFile(string(content), path, maxTokens)
+		}
+	}
+
 	return string(content), nil
+}
+
+// chunkFile returns a chunked preview of a large file with summary
+func (t *ReadFileTool) chunkFile(content string, path string, maxTokens int) (string, error) {
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+
+	// Calculate how many lines we can show (roughly maxTokens * 4 chars / avg line length)
+	avgLineLen := len(content) / max(totalLines, 1)
+	if avgLineLen == 0 {
+		avgLineLen = 40 // Default average line length
+	}
+	maxChars := maxTokens * 4
+	maxLines := maxChars / avgLineLen
+	if maxLines < ChunkPreviewLines {
+		maxLines = ChunkPreviewLines
+	}
+	if maxLines > totalLines {
+		maxLines = totalLines
+	}
+
+	var sb strings.Builder
+
+	// Write header
+	fmt.Fprintf(&sb, "=== File: %s ===\n", path)
+	fmt.Fprintf(&sb, "=== CHUNKED: Showing first %d of %d lines (file too large) ===\n\n", maxLines, totalLines)
+
+	// Write first N lines with line numbers
+	for i := 0; i < maxLines && i < totalLines; i++ {
+		fmt.Fprintf(&sb, "%4d | %s\n", i+1, lines[i])
+	}
+
+	// Write summary footer
+	remainingLines := totalLines - maxLines
+	if remainingLines > 0 {
+		sb.WriteString("\n=== TRUNCATED ===\n")
+		fmt.Fprintf(&sb, "Remaining: %d lines not shown\n", remainingLines)
+		sb.WriteString("Use start_line/end_line to read specific sections, or max_tokens=0 for full file\n")
+	}
+
+	return sb.String(), nil
 }
 
 // WriteFileTool writes content to a file

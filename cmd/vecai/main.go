@@ -70,18 +70,25 @@ func run() error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Determine permission mode
+	// Determine permission mode and analysis mode
 	permMode := permissions.ModeAsk
-	for i, arg := range args {
-		if arg == "--auto" {
+	analysisMode := cfg.Analysis.Enabled // Default from config
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--auto":
 			permMode = permissions.ModeAuto
 			args = append(args[:i], args[i+1:]...)
-			break
-		}
-		if arg == "--strict" {
+			i--
+		case "--strict":
 			permMode = permissions.ModeStrict
 			args = append(args[:i], args[i+1:]...)
-			break
+			i--
+		case "--analyze", "-a":
+			analysisMode = true
+			permMode = permissions.ModeAnalysis
+			args = append(args[:i], args[i+1:]...)
+			i--
 		}
 	}
 
@@ -110,19 +117,27 @@ func run() error {
 		llmClient = rateLimitedClient
 	}
 
-	registry := tools.NewRegistry()
+	// Select registry based on mode
+	var registry *tools.Registry
+	if analysisMode {
+		registry = tools.NewAnalysisRegistry()
+		logger.Debug("Using analysis registry (read-only tools)")
+	} else {
+		registry = tools.NewRegistry()
+	}
 	policy := permissions.NewPolicy(permMode, input, output)
 	skillLoader := skills.NewLoader()
 
 	// Create agent
 	a := agent.New(agent.Config{
-		LLM:         llmClient,
-		Tools:       registry,
-		Permissions: policy,
-		Skills:      skillLoader,
-		Output:      output,
-		Input:       input,
-		Config:      cfg,
+		LLM:          llmClient,
+		Tools:        registry,
+		Permissions:  policy,
+		Skills:       skillLoader,
+		Output:       output,
+		Input:        input,
+		Config:       cfg,
+		AnalysisMode: analysisMode,
 	})
 
 	// Check for plan mode
@@ -172,8 +187,16 @@ Flags:
   --token <key>           API key (overrides ANTHROPIC_API_KEY env var)
   --auto                  Auto-approve all tool executions
   --strict                Prompt for all tool executions (including reads)
+  --analyze, -a           Token-efficient analysis mode (read-only, minimal prompt)
   -v, --version           Show version
   -h, --help              Show help
+
+Analysis Mode (--analyze):
+  Optimized for code reviews and understanding:
+  - Minimal system prompt (~300 vs ~2000 tokens)
+  - Read-only tools only (no writes/executes)
+  - Aggressive context compaction (70% vs 95%)
+  - Auto-approve all reads, block all writes
 
 Interactive Commands:
   /help                   Show help

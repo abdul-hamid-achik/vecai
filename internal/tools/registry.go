@@ -81,6 +81,39 @@ func NewRegistry() *Registry {
 	return r
 }
 
+// NewAnalysisRegistry creates a tool registry with only read-only analysis tools
+// This is used in analysis mode to reduce token consumption and prevent modifications
+func NewAnalysisRegistry() *Registry {
+	r := &Registry{
+		tools: make(map[string]Tool),
+	}
+
+	// Read-only analysis tools only
+	r.Register(&VecgrepSearchTool{})
+	r.Register(&VecgrepSimilarTool{})
+	r.Register(&VecgrepStatusTool{})
+	r.Register(&ReadFileTool{})
+	r.Register(&ListFilesTool{})
+	r.Register(&GrepTool{})
+
+	// Git visualization tools (all read-only)
+	r.Register(&GpeekStatusTool{})
+	r.Register(&GpeekDiffTool{})
+	r.Register(&GpeekLogTool{})
+	r.Register(&GpeekSummaryTool{})
+	r.Register(&GpeekBlameTool{})
+	r.Register(&GpeekBranchesTool{})
+	r.Register(&GpeekStashesTool{})
+	r.Register(&GpeekTagsTool{})
+	r.Register(&GpeekChangesBetweenTool{})
+	r.Register(&GpeekConflictCheckTool{})
+
+	// Note: Excludes write_file, edit_file, bash (write/execute tools)
+	// Web search is excluded to reduce token usage
+
+	return r
+}
+
 // Register adds a tool to the registry
 func (r *Registry) Register(tool Tool) {
 	r.mu.Lock()

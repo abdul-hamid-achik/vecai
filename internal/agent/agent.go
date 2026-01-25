@@ -26,6 +26,14 @@ import (
 // ErrExit is returned when the user requests to exit
 var ErrExit = errors.New("user requested exit")
 
+// analysisSystemPrompt is a minimal prompt for token-efficient analysis mode (~300 tokens vs ~2000)
+const analysisSystemPrompt = `You are a code analysis assistant. Help developers understand and document code.
+
+TOOLS: vecgrep_search (semantic), read_file, list_files, grep, gpeek_* (git)
+STRATEGY: vecgrep_search first, then read_file for context
+
+Be concise. Cite file:line in answers.`
+
 const systemPrompt = `You are vecai, an AI-powered codebase assistant. You help developers understand, navigate, and modify their code.
 
 ## Available Tools
@@ -84,28 +92,33 @@ vecgrep uses semantic embeddings that understand code MEANING, not just text mat
 
 // Config holds agent configuration
 type Config struct {
-	LLM         llm.LLMClient
-	Tools       *tools.Registry
-	Permissions *permissions.Policy
-	Skills      *skills.Loader
-	Output      *ui.OutputHandler
-	Input       *ui.InputHandler
-	Config      *config.Config
+	LLM          llm.LLMClient
+	Tools        *tools.Registry
+	Permissions  *permissions.Policy
+	Skills       *skills.Loader
+	Output       *ui.OutputHandler
+	Input        *ui.InputHandler
+	Config       *config.Config
+	AnalysisMode bool // Enable token-efficient analysis mode
 }
 
 // Agent is the main AI agent
 type Agent struct {
-	llm         llm.LLMClient
-	tools       *tools.Registry
-	permissions *permissions.Policy
-	skills      *skills.Loader
-	output      *ui.OutputHandler
-	input       *ui.InputHandler
-	config      *config.Config
-	contextMgr  *ctxmgr.ContextManager
-	compactor   *ctxmgr.Compactor
-	planner     *Planner
-	sessionMgr  *session.Manager
+	llm           llm.LLMClient
+	tools         *tools.Registry
+	toolSelector  *tools.ToolSelector
+	permissions   *permissions.Policy
+	skills        *skills.Loader
+	output        *ui.OutputHandler
+	input         *ui.InputHandler
+	config        *config.Config
+	contextMgr    *ctxmgr.ContextManager
+	compactor     *ctxmgr.Compactor
+	resultCache   *ctxmgr.ToolResultCache
+	planner       *Planner
+	sessionMgr    *session.Manager
+	analysisMode  bool   // Token-efficient analysis mode
+	currentQuery  string // Current query for smart tool selection
 
 	// Track if we've shown the context warning this session
 	shownContextWarning bool
@@ -121,6 +134,14 @@ func New(cfg Config) *Agent {
 		EnableAutoCompact:    cfg.Config.Context.EnableAutoCompact,
 		ContextWindow:        cfg.Config.Context.ContextWindow,
 	}
+
+	// Apply analysis mode overrides for aggressive compaction
+	if cfg.AnalysisMode {
+		ctxConfig.AutoCompactThreshold = 0.70
+		ctxConfig.WarnThreshold = 0.50
+		ctxConfig.PreserveLast = 2
+	}
+
 	if ctxConfig.ContextWindow == 0 {
 		ctxConfig.ContextWindow = ctxmgr.DefaultContextWindow
 	}
@@ -141,17 +162,32 @@ func New(cfg Config) *Agent {
 		logger.Warn("Failed to initialize session manager: %v", err)
 	}
 
+	// Select system prompt based on mode
+	prompt := systemPrompt
+	if cfg.AnalysisMode {
+		prompt = analysisSystemPrompt
+	}
+
+	// Initialize result cache for analysis mode
+	var resultCache *ctxmgr.ToolResultCache
+	if cfg.AnalysisMode {
+		resultCache = ctxmgr.NewToolResultCache(ctxmgr.DefaultCacheTTL)
+	}
+
 	a := &Agent{
-		llm:         cfg.LLM,
-		tools:       cfg.Tools,
-		permissions: cfg.Permissions,
-		skills:      cfg.Skills,
-		output:      cfg.Output,
-		input:       cfg.Input,
-		config:      cfg.Config,
-		contextMgr:  ctxmgr.NewContextManager(systemPrompt, ctxConfig),
-		compactor:   ctxmgr.NewCompactor(cfg.LLM),
-		sessionMgr:  sessionMgr,
+		llm:          cfg.LLM,
+		tools:        cfg.Tools,
+		toolSelector: tools.NewToolSelector(cfg.Tools),
+		permissions:  cfg.Permissions,
+		skills:       cfg.Skills,
+		output:       cfg.Output,
+		input:        cfg.Input,
+		config:       cfg.Config,
+		contextMgr:   ctxmgr.NewContextManager(prompt, ctxConfig),
+		compactor:    ctxmgr.NewCompactor(cfg.LLM),
+		resultCache:  resultCache,
+		sessionMgr:   sessionMgr,
+		analysisMode: cfg.AnalysisMode,
 	}
 	a.planner = NewPlanner(a)
 
@@ -183,6 +219,9 @@ func (a *Agent) Run(query string) error {
 // runLineBased executes a query with line-based output (non-TUI fallback)
 func (a *Agent) runLineBased(query string) error {
 	ctx := context.Background()
+
+	// Track current query for smart tool selection
+	a.currentQuery = query
 
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
@@ -417,6 +456,9 @@ func (a *Agent) RunInteractiveTUI() error {
 func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	ctx := context.Background()
 
+	// Track current query for smart tool selection
+	a.currentQuery = query
+
 	// Set TUI-aware rate limit callback if client supports it
 	if rlClient, ok := a.llm.(*llm.RateLimitedClient); ok {
 		rlClient.SetWaitCallback(func(ctx context.Context, info llm.WaitInfo) error {
@@ -482,7 +524,7 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		toolDefs := a.getToolDefinitions()
 
 		// Call LLM with cancellable context
-		stream := a.llm.ChatStream(runCtx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
+		stream := a.llm.ChatStream(runCtx, a.contextMgr.GetMessages(), toolDefs, a.getSystemPrompt())
 
 		var response llm.Response
 		var textContent strings.Builder
@@ -712,12 +754,18 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 			})
 			adapter.ToolResult(call.Name, err.Error(), true)
 		} else {
+			// Store in cache if result is large and we're in analysis mode
+			contextResult := result
+			if a.resultCache != nil && ctxmgr.ShouldCache(result) {
+				summary, _ := a.resultCache.Store(call.Name, call.Input, result)
+				contextResult = summary // Use summary for LLM context
+			}
 			results = append(results, toolResult{
 				Name:   call.Name,
-				Result: result,
+				Result: contextResult,
 				Error:  false,
 			})
-			adapter.ToolResult(call.Name, result, false)
+			adapter.ToolResult(call.Name, result, false) // Show full result to user
 		}
 	}
 
@@ -1418,7 +1466,7 @@ func (a *Agent) runLoop(ctx context.Context) error {
 		toolDefs := a.getToolDefinitions()
 
 		// Call LLM with streaming
-		stream := a.llm.ChatStream(ctx, a.contextMgr.GetMessages(), toolDefs, systemPrompt)
+		stream := a.llm.ChatStream(ctx, a.contextMgr.GetMessages(), toolDefs, a.getSystemPrompt())
 
 		var response llm.Response
 		var textContent strings.Builder
@@ -1566,12 +1614,18 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 			})
 			a.output.ToolResult(call.Name, err.Error(), true)
 		} else {
+			// Store in cache if result is large and we're in analysis mode
+			contextResult := result
+			if a.resultCache != nil && ctxmgr.ShouldCache(result) {
+				summary, _ := a.resultCache.Store(call.Name, call.Input, result)
+				contextResult = summary // Use summary for LLM context
+			}
 			results = append(results, toolResult{
 				Name:   call.Name,
-				Result: result,
+				Result: contextResult,
 				Error:  false,
 			})
-			a.output.ToolResult(call.Name, result, false)
+			a.output.ToolResult(call.Name, result, false) // Show full result to user
 		}
 	}
 
@@ -1579,10 +1633,18 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 }
 
 // getToolDefinitions converts tools to LLM format
+// Uses smart selection in analysis mode with SmartToolSelection enabled
 func (a *Agent) getToolDefinitions() []llm.ToolDefinition {
-	registryDefs := a.tools.GetDefinitions()
-	defs := make([]llm.ToolDefinition, len(registryDefs))
+	var registryDefs []tools.ToolDefinition
 
+	// Use smart tool selection when in analysis mode with smart selection enabled
+	if a.analysisMode && a.config.Analysis.SmartToolSelection && a.currentQuery != "" {
+		registryDefs = a.toolSelector.SelectTools(a.currentQuery)
+	} else {
+		registryDefs = a.tools.GetDefinitions()
+	}
+
+	defs := make([]llm.ToolDefinition, len(registryDefs))
 	for i, d := range registryDefs {
 		defs[i] = llm.ToolDefinition{
 			Name:        d.Name,
@@ -1684,6 +1746,14 @@ func (a *Agent) showSkills() {
 			a.output.TextLn(fmt.Sprintf("    Triggers: %s", strings.Join(s.Triggers, ", ")))
 		}
 	}
+}
+
+// getSystemPrompt returns the appropriate system prompt based on analysis mode
+func (a *Agent) getSystemPrompt() string {
+	if a.analysisMode {
+		return analysisSystemPrompt
+	}
+	return systemPrompt
 }
 
 // ClearHistory clears conversation history

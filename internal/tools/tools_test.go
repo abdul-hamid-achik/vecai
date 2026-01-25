@@ -46,8 +46,11 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	if len(tools) != 19 {
-		t.Errorf("expected 19 tools, got %d", len(tools))
+	// Base count is 19, plus 1 if TAVILY_API_KEY is set (web_search)
+	minExpected := 19
+	maxExpected := 20
+	if len(tools) < minExpected || len(tools) > maxExpected {
+		t.Errorf("expected %d-%d tools, got %d", minExpected, maxExpected, len(tools))
 	}
 }
 
@@ -55,8 +58,11 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	if len(defs) != 19 {
-		t.Errorf("expected 19 definitions, got %d", len(defs))
+	// Base count is 19, plus 1 if TAVILY_API_KEY is set (web_search)
+	minExpected := 19
+	maxExpected := 20
+	if len(defs) < minExpected || len(defs) > maxExpected {
+		t.Errorf("expected %d-%d definitions, got %d", minExpected, maxExpected, len(defs))
 	}
 
 	// Check that definitions have required fields
@@ -744,5 +750,146 @@ func TestGpeekFormatFunctions(t *testing.T) {
 	}
 	if !strings.Contains(result, "No tags") {
 		t.Errorf("expected 'No tags found', got %q", result)
+	}
+}
+
+func TestReadFileTool_MaxTokensParam(t *testing.T) {
+	tool := &ReadFileTool{}
+
+	// Verify schema has max_tokens parameter
+	schema := tool.InputSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+
+	if _, ok := props["max_tokens"]; !ok {
+		t.Error("expected 'max_tokens' in schema properties")
+	}
+}
+
+func TestReadFileTool_ChunkingLargeFile(t *testing.T) {
+	tool := &ReadFileTool{}
+
+	// Create a large temp file
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "large.txt")
+
+	// Create content with many lines (to exceed default token limit)
+	var sb strings.Builder
+	for i := 0; i < 500; i++ {
+		sb.WriteString("This is a line of code that is reasonably long to simulate real files.\n")
+	}
+	content := sb.String()
+
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with default max_tokens (should chunk)
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"path": testFile,
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Result should be chunked (shorter than original)
+	if len(result) >= len(content) {
+		t.Errorf("expected chunked result to be shorter than original (%d vs %d)", len(result), len(content))
+	}
+
+	// Should contain truncation indicator
+	if !strings.Contains(result, "CHUNKED") && !strings.Contains(result, "TRUNCATED") {
+		t.Error("expected chunked result to contain truncation indicator")
+	}
+}
+
+func TestReadFileTool_UnlimitedMaxTokens(t *testing.T) {
+	tool := &ReadFileTool{}
+
+	// Create a temp file
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "test.txt")
+
+	var sb strings.Builder
+	for i := 0; i < 100; i++ {
+		sb.WriteString("Line of content.\n")
+	}
+	content := sb.String()
+
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with max_tokens=0 (unlimited)
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"path":       testFile,
+		"max_tokens": float64(0),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Result should be the full content
+	if result != content {
+		t.Error("expected full content when max_tokens=0")
+	}
+}
+
+func TestReadFileTool_CustomMaxTokens(t *testing.T) {
+	tool := &ReadFileTool{}
+
+	// Create a large temp file
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "large.txt")
+
+	var sb strings.Builder
+	for i := 0; i < 500; i++ {
+		sb.WriteString("Line of content here.\n")
+	}
+	content := sb.String()
+
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with high max_tokens (should not chunk)
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"path":       testFile,
+		"max_tokens": float64(100000),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Result should be full content
+	if result != content {
+		t.Error("expected full content with high max_tokens")
+	}
+}
+
+func TestReadFileTool_SmallFileNoChunking(t *testing.T) {
+	tool := &ReadFileTool{}
+
+	// Create a small temp file
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "small.txt")
+	content := "This is a small file.\n"
+
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Small files should not be chunked
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"path": testFile,
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if result != content {
+		t.Errorf("expected small file to not be chunked, got %q", result)
 	}
 }
