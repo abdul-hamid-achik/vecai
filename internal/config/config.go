@@ -4,27 +4,57 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Provider represents the LLM provider
+type Provider string
+
+const (
+	ProviderOllama Provider = "ollama"
 )
 
 // ModelTier represents the model capability level
 type ModelTier string
 
 const (
-	TierFast   ModelTier = "fast"   // Claude Haiku
-	TierSmart  ModelTier = "smart"  // Claude Sonnet
-	TierGenius ModelTier = "genius" // Claude Opus
+	TierFast   ModelTier = "fast"   // Fast model (qwen3:8b)
+	TierSmart  ModelTier = "smart"  // Smart model (qwen2.5-coder:7b)
+	TierGenius ModelTier = "genius" // Genius model (cogito:14b)
 )
 
-// RateLimitConfig holds rate limiting configuration
+// OllamaConfig holds Ollama-specific configuration
+type OllamaConfig struct {
+	BaseURL     string `yaml:"base_url"`     // Default: "http://localhost:11434"
+	ModelFast   string `yaml:"model_fast"`   // Default: "qwen3:8b"
+	ModelSmart  string `yaml:"model_smart"`  // Default: "qwen2.5-coder:7b"
+	ModelGenius string `yaml:"model_genius"` // Default: "cogito:14b"
+	KeepAlive   string `yaml:"keep_alive"`   // Default: "5m"
+}
+
+// AgentConfig holds multi-agent configuration
+type AgentConfig struct {
+	MaxRetries          int  `yaml:"max_retries"`          // Max retries per step (default: 3)
+	VerificationEnabled bool `yaml:"verification_enabled"` // Enable verification agent (default: true)
+}
+
+// MemoryConfig holds memory layer configuration
+type MemoryConfig struct {
+	Enabled    bool   `yaml:"enabled"`     // Enable memory layer (default: true)
+	ProjectDir string `yaml:"project_dir"` // Per-project memory (default: ".vecai/memory")
+	GlobalDir  string `yaml:"global_dir"`  // Global memory (default: "~/.config/vecai/memory")
+}
+
+// RateLimitConfig holds rate limiting configuration (kept for backward compatibility)
 type RateLimitConfig struct {
-	MaxRetries         int           `yaml:"max_retries"`          // Maximum retries on 429
+	MaxRetries         int           `yaml:"max_retries"`          // Maximum retries on error
 	BaseDelay          time.Duration `yaml:"base_delay"`           // Base delay for exponential backoff
 	MaxDelay           time.Duration `yaml:"max_delay"`            // Maximum delay between retries
-	TokensPerMinute    int           `yaml:"tokens_per_minute"`    // Rate limit (tokens/minute)
-	EnableRateLimiting bool          `yaml:"enable_rate_limiting"` // Enable proactive rate limiting
+	TokensPerMinute    int           `yaml:"tokens_per_minute"`    // Rate limit (unused for Ollama)
+	EnableRateLimiting bool          `yaml:"enable_rate_limiting"` // Enable rate limiting (unused for Ollama)
 }
 
 // ContextConfig holds context management configuration
@@ -33,7 +63,7 @@ type ContextConfig struct {
 	WarnThreshold        float64 `yaml:"warn_threshold"`         // Show warning at this % (default: 0.80)
 	PreserveLast         int     `yaml:"preserve_last"`          // Messages to preserve during compact (default: 4)
 	EnableAutoCompact    bool    `yaml:"enable_auto_compact"`    // Enable auto-compaction (default: true)
-	ContextWindow        int     `yaml:"context_window"`         // Context window size in tokens (default: 200000)
+	ContextWindow        int     `yaml:"context_window"`         // Context window size in tokens (qwen3:8b=32K, cogito:14b=128K)
 }
 
 // AnalysisConfig holds configuration for token-efficient analysis mode
@@ -46,13 +76,16 @@ type AnalysisConfig struct {
 
 // Config holds the application configuration
 type Config struct {
-	APIKey      string          `yaml:"-"` // From environment only
+	Provider    Provider        `yaml:"provider"`    // LLM provider (only "ollama" supported)
+	Ollama      OllamaConfig    `yaml:"ollama"`      // Ollama configuration
+	Agent       AgentConfig     `yaml:"agent"`       // Multi-agent configuration
+	Memory      MemoryConfig    `yaml:"memory"`      // Memory layer configuration
 	DefaultTier ModelTier       `yaml:"default_tier"`
 	MaxTokens   int             `yaml:"max_tokens"`
 	Temperature float64         `yaml:"temperature"`
 	SkillsDir   string          `yaml:"skills_dir"`
 	VecgrepPath string          `yaml:"vecgrep_path"`
-	RateLimit   RateLimitConfig `yaml:"rate_limit"`
+	RateLimit   RateLimitConfig `yaml:"rate_limit"` // Kept for backward compat
 	Context     ContextConfig   `yaml:"context"`
 	Analysis    AnalysisConfig  `yaml:"analysis"`
 
@@ -63,24 +96,41 @@ type Config struct {
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
+		Provider: ProviderOllama,
+		Ollama: OllamaConfig{
+			BaseURL:     "http://localhost:11434",
+			ModelFast:   "qwen3:8b",
+			ModelSmart:  "qwen2.5-coder:7b",
+			ModelGenius: "cogito:14b",
+			KeepAlive:   "5m",
+		},
+		Agent: AgentConfig{
+			MaxRetries:          3,
+			VerificationEnabled: true,
+		},
+		Memory: MemoryConfig{
+			Enabled:    true,
+			ProjectDir: ".vecai/memory",
+			GlobalDir:  "~/.config/vecai/memory",
+		},
 		DefaultTier: TierFast,
 		MaxTokens:   8192,
 		Temperature: 0.7,
 		SkillsDir:   "skills",
 		VecgrepPath: "vecgrep",
 		RateLimit: RateLimitConfig{
-			MaxRetries:         5,
+			MaxRetries:         3,
 			BaseDelay:          1 * time.Second,
-			MaxDelay:           60 * time.Second,
-			TokensPerMinute:    30000,
-			EnableRateLimiting: true,
+			MaxDelay:           30 * time.Second,
+			TokensPerMinute:    0, // Not used for Ollama
+			EnableRateLimiting: false,
 		},
 		Context: ContextConfig{
 			AutoCompactThreshold: 0.95,
 			WarnThreshold:        0.80,
 			PreserveLast:         4,
 			EnableAutoCompact:    true,
-			ContextWindow:        200000,
+			ContextWindow:        32768, // Safe default for qwen3:8b and qwen2.5-coder:7b (32K)
 		},
 		Analysis: AnalysisConfig{
 			Enabled:            false,
@@ -93,7 +143,8 @@ func DefaultConfig() *Config {
 
 // LoadOptions contains options for loading configuration
 type LoadOptions struct {
-	TokenOverride string // Override API key (from --token flag)
+	BaseURLOverride string // Override Ollama base URL
+	ModelOverride   string // Override default model
 }
 
 // Load loads configuration from files and environment
@@ -125,15 +176,20 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		}
 	}
 
-	// Load API key: CLI flag > environment variable
-	if opts.TokenOverride != "" {
-		cfg.APIKey = opts.TokenOverride
-	} else {
-		cfg.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+	// Apply overrides from environment
+	// OLLAMA_HOST can be: "0.0.0.0", "0.0.0.0:11434", or "http://localhost:11434"
+	if hostEnv := os.Getenv("OLLAMA_HOST"); hostEnv != "" {
+		cfg.Ollama.BaseURL = normalizeOllamaHost(hostEnv)
 	}
 
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required (or use --token flag)")
+	// Apply CLI overrides
+	if opts.BaseURLOverride != "" {
+		cfg.Ollama.BaseURL = opts.BaseURLOverride
+	}
+	if opts.ModelOverride != "" {
+		cfg.Ollama.ModelFast = opts.ModelOverride
+		cfg.Ollama.ModelSmart = opts.ModelOverride
+		cfg.Ollama.ModelGenius = opts.ModelOverride
 	}
 
 	return cfg, nil
@@ -183,17 +239,17 @@ func (c *Config) createDefault() error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-// GetModel returns the Anthropic model ID for a tier
+// GetModel returns the Ollama model ID for a tier
 func (c *Config) GetModel(tier ModelTier) string {
 	switch tier {
 	case TierFast:
-		return "claude-haiku-4-5-20251001"
+		return c.Ollama.ModelFast
 	case TierSmart:
-		return "claude-sonnet-4-5-20250929"
+		return c.Ollama.ModelSmart
 	case TierGenius:
-		return "claude-opus-4-5-20251101"
+		return c.Ollama.ModelGenius
 	default:
-		return "claude-sonnet-4-5-20250929"
+		return c.Ollama.ModelSmart
 	}
 }
 
@@ -210,4 +266,29 @@ func (c *Config) SetTier(tier ModelTier) {
 // ConfigPath returns where the config was loaded from
 func (c *Config) ConfigPath() string {
 	return c.configPath
+}
+
+// normalizeOllamaHost converts OLLAMA_HOST env var to a proper URL
+// Handles: "0.0.0.0", "0.0.0.0:11434", "localhost:11434", "http://localhost:11434"
+func normalizeOllamaHost(host string) string {
+	// Already a URL
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return host
+	}
+
+	// If it's 0.0.0.0 (bind all interfaces), use localhost for client connections
+	if host == "0.0.0.0" || strings.HasPrefix(host, "0.0.0.0:") {
+		if strings.Contains(host, ":") {
+			parts := strings.SplitN(host, ":", 2)
+			return "http://localhost:" + parts[1]
+		}
+		return "http://localhost:11434"
+	}
+
+	// Add default port if not specified
+	if !strings.Contains(host, ":") {
+		host = host + ":11434"
+	}
+
+	return "http://" + host
 }

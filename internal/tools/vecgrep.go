@@ -63,11 +63,11 @@ func (t *VecgrepSearchTool) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	if lang, ok := input["language"].(string); ok && lang != "" {
-		args = append(args, "--language", lang)
+		args = append(args, "--lang", lang)
 	}
 
 	if pattern, ok := input["file_pattern"].(string); ok && pattern != "" {
-		args = append(args, "--file-pattern", pattern)
+		args = append(args, "--file", pattern)
 	}
 
 	// Add JSON output format
@@ -210,7 +210,7 @@ func (t *VecgrepSimilarTool) Execute(ctx context.Context, input map[string]any) 
 	}
 
 	if lang, ok := input["language"].(string); ok && lang != "" {
-		args = append(args, "--language", lang)
+		args = append(args, "--lang", lang)
 	}
 
 	args = append(args, "--format", "json")

@@ -32,11 +32,10 @@ func Run(cfg RunConfig) error {
 	// Create model
 	model := NewModel(cfg.ModelName, streamChan)
 
-	// Create program
+	// Create program (no mouse capture to allow native text selection)
 	program := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	// Create adapter
@@ -108,10 +107,10 @@ func NewTUIRunner(modelName string) *TUIRunner {
 	model := NewModel(modelName, streamChan)
 	runLog.Debug("NewTUIRunner: model created, callbacks=%p", model.callbacks)
 
+	// No mouse capture to allow native text selection
 	program := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 	runLog.Debug("NewTUIRunner: tea.Program created")
 
@@ -193,6 +192,11 @@ func (r *TUIRunner) Quit() {
 // ClearQueue clears all queued inputs
 func (r *TUIRunner) ClearQueue() {
 	r.model.ClearQueue()
+}
+
+// GetConversationText returns the conversation as plain text for copying
+func (r *TUIRunner) GetConversationText() string {
+	return r.model.GetConversationText()
 }
 
 // Run starts the TUI and blocks until it exits

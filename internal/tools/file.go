@@ -39,6 +39,11 @@ func (t *ReadFileTool) InputSchema() map[string]any {
 				"type":        "integer",
 				"description": "Optional: Maximum tokens to return (default: 2000, set to 0 for unlimited). Large files are chunked with a summary.",
 			},
+			"context": map[string]any{
+				"type":        "string",
+				"description": "Optional: 'signatures' to return only function/type signatures (Go files only). More efficient for understanding API surface.",
+				"enum":        []string{"full", "signatures"},
+			},
 		},
 		"required": []string{"path"},
 	}
@@ -77,6 +82,18 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 
 	if info.IsDir() {
 		return "", fmt.Errorf("path is a directory, not a file: %s", path)
+	}
+
+	// Check for signatures mode (Go files only)
+	if contextMode, ok := input["context"].(string); ok && contextMode == "signatures" {
+		if strings.HasSuffix(absPath, ".go") {
+			astTool := &ASTTool{}
+			return astTool.Execute(ctx, map[string]any{
+				"path":    absPath,
+				"include": []any{"functions", "types"},
+			})
+		}
+		// Non-Go files: fall through to normal read
 	}
 
 	// Read file

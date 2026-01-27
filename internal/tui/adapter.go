@@ -116,6 +116,11 @@ func (a *TUIAdapter) Info(msg string) {
 	a.streamChan <- NewInfoMsg(msg)
 }
 
+// Activity sets the activity message and enters streaming state
+func (a *TUIAdapter) Activity(msg string) {
+	a.streamChan <- NewActivityMsg(msg)
+}
+
 // Done outputs a completion message
 func (a *TUIAdapter) Done() {
 	a.streamChan <- NewDoneMsg()

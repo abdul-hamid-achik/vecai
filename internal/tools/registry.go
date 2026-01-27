@@ -61,6 +61,12 @@ func NewRegistry() *Registry {
 	r.Register(&BashTool{})
 	r.Register(&GrepTool{})
 
+	// Smart tools for Go development
+	r.Register(&ASTTool{})
+	r.Register(&LSPTool{})
+	r.Register(&LinterTool{})
+	r.Register(&TestRunnerTool{})
+
 	// Register gpeek tools
 	r.Register(&GpeekStatusTool{})
 	r.Register(&GpeekDiffTool{})
@@ -95,6 +101,10 @@ func NewAnalysisRegistry() *Registry {
 	r.Register(&ReadFileTool{})
 	r.Register(&ListFilesTool{})
 	r.Register(&GrepTool{})
+
+	// Smart tools (read-only subset)
+	r.Register(&ASTTool{})
+	r.Register(&LSPTool{})
 
 	// Git visualization tools (all read-only)
 	r.Register(&GpeekStatusTool{})

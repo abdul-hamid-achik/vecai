@@ -33,6 +33,11 @@ func TestRegistry(t *testing.T) {
 		"gpeek_tags",
 		"gpeek_changes_between",
 		"gpeek_conflict_check",
+		// smart tools
+		"ast_parse",
+		"lsp_query",
+		"lint",
+		"test_run",
 	}
 
 	for _, name := range expectedTools {
@@ -46,9 +51,10 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	// Base count is 19, plus 1 if TAVILY_API_KEY is set (web_search)
-	minExpected := 19
-	maxExpected := 20
+	// Base count is 23, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Tools: vecgrep(3) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 23
+	minExpected := 23
+	maxExpected := 24
 	if len(tools) < minExpected || len(tools) > maxExpected {
 		t.Errorf("expected %d-%d tools, got %d", minExpected, maxExpected, len(tools))
 	}
@@ -58,9 +64,10 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	// Base count is 19, plus 1 if TAVILY_API_KEY is set (web_search)
-	minExpected := 19
-	maxExpected := 20
+	// Base count is 23, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Tools: vecgrep(3) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 23
+	minExpected := 23
+	maxExpected := 24
 	if len(defs) < minExpected || len(defs) > maxExpected {
 		t.Errorf("expected %d-%d definitions, got %d", minExpected, maxExpected, len(defs))
 	}

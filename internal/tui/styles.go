@@ -19,144 +19,175 @@ var (
 	nord6 = lipgloss.Color("#eceff4") // Bright text
 
 	// Frost - accents
-	nord7  = lipgloss.Color("#8fbcbb") // Calm accent
-	nord8  = lipgloss.Color("#88c0d0") // Primary accent
-	nord9  = lipgloss.Color("#81a1c1") // Secondary accent
-	nord10 = lipgloss.Color("#5e81ac") // Tertiary accent
+	nord7  = lipgloss.Color("#8fbcbb") // Calm accent (teal)
+	nord8  = lipgloss.Color("#88c0d0") // Primary accent (cyan)
+	nord9  = lipgloss.Color("#81a1c1") // Secondary accent (blue)
+	nord10 = lipgloss.Color("#5e81ac") // Tertiary accent (deep blue)
 
 	// Aurora - semantic
-	nord11 = lipgloss.Color("#bf616a") // Error
-	nord12 = lipgloss.Color("#d08770") // Warning
-	nord13 = lipgloss.Color("#ebcb8b") // Caution
-	nord14 = lipgloss.Color("#a3be8c") // Success
-	nord15 = lipgloss.Color("#b48ead") // Special
+	nord11 = lipgloss.Color("#bf616a") // Error (red)
+	nord12 = lipgloss.Color("#d08770") // Warning (orange)
+	nord13 = lipgloss.Color("#ebcb8b") // Caution (yellow)
+	nord14 = lipgloss.Color("#a3be8c") // Success (green)
+	nord15 = lipgloss.Color("#b48ead") // Special (purple)
 )
 
-// Semantic color aliases (unused variables prefixed with _ for palette completeness)
+// Semantic color aliases for cleaner code
 var (
-	_ = nord0  // Base background - available for custom styling
-	_ = nord2  // Selection/active - available for custom styling
-	_ = nord5  // Secondary text - available for custom styling
-	_ = nord7  // Calm accent - available for custom styling
-	_ = nord10 // Tertiary accent - available for custom styling
-	_ = nord15 // Special - available for custom styling
+	colorBg        = nord0
+	colorBgElevate = nord1
+	colorBgActive  = nord2
+	colorDim       = nord3
+	colorText      = nord4
+	colorTextBold  = nord6
+	colorAccent    = nord8
+	colorAccent2   = nord9
+	colorError     = nord11
+	colorWarn      = nord12
+	colorCaution   = nord13
+	colorSuccess   = nord14
+	colorSpecial   = nord15
 )
 
-// Styles
+// Styles - organized by component
 var (
-	// Header styles - elevated surface (nord1)
+	// ═══════════════════════════════════════════════════════════════════════
+	// HEADER
+	// ═══════════════════════════════════════════════════════════════════════
 	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(nord6).
-			Background(nord1).
+			Foreground(colorText).
+			Background(colorBgElevate).
 			Padding(0, 1)
 
 	headerTitleStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(nord8) // Primary accent
+				Foreground(colorAccent)
 
 	headerModelStyle = lipgloss.NewStyle().
-				Foreground(nord3) // Subtle
+				Foreground(colorDim)
 
-	// Footer styles - elevated surface
+	headerSessionStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// FOOTER & INPUT
+	// ═══════════════════════════════════════════════════════════════════════
 	footerStyle = lipgloss.NewStyle().
-			Foreground(nord4).
-			Background(nord1).
+			Foreground(colorText).
+			Background(colorBgElevate).
 			Padding(0, 1)
 
 	inputPromptStyle = lipgloss.NewStyle().
-				Foreground(nord14). // Success green
+				Foreground(colorSuccess).
 				Bold(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// STATUS BAR
+	// ═══════════════════════════════════════════════════════════════════════
+	statusBarStyle = lipgloss.NewStyle().
+			Foreground(colorDim).
+			Background(colorBgElevate)
 
 	spinnerStyle = lipgloss.NewStyle().
-			Foreground(nord8) // Primary accent
-
-	// Content styles
-	userStyle = lipgloss.NewStyle().
-			Foreground(nord6). // Bright text
-			Bold(true)
-
-	userPrefixStyle = lipgloss.NewStyle().
-			Foreground(nord14). // Success green
-			Bold(true)
-
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(nord4) // Primary text
-
-	thinkingStyle = lipgloss.NewStyle().
-			Foreground(nord3). // Dim/comments
-			Italic(true)
-
-	// Tool styles
-	toolCallStyle = lipgloss.NewStyle().
-			Foreground(nord8). // Primary accent
-			Bold(true)
-
-	toolNameStyle = lipgloss.NewStyle().
-			Foreground(nord8) // Primary accent
-
-	toolDescStyle = lipgloss.NewStyle().
-			Foreground(nord3) // Subtle
-
-	toolResultSuccessStyle = lipgloss.NewStyle().
-				Foreground(nord14) // Success
-
-	toolResultErrorStyle = lipgloss.NewStyle().
-				Foreground(nord11) // Error
-
-	toolResultIndentStyle = lipgloss.NewStyle().
-				Foreground(nord3) // Subtle
-
-	// Message styles
-	errorStyle = lipgloss.NewStyle().
-			Foreground(nord11). // Error red
-			Bold(true)
-
-	warningStyle = lipgloss.NewStyle().
-			Foreground(nord13). // Warning yellow
-			Bold(true)
-
-	successStyle = lipgloss.NewStyle().
-			Foreground(nord14). // Success green
-			Bold(true)
-
-	infoStyle = lipgloss.NewStyle().
-			Foreground(nord9) // Info blue
-
-	// Permission styles - VISIBLE (warning yellow, bold)
-	permissionPromptStyle = lipgloss.NewStyle().
-				Foreground(nord13). // Warning yellow - VISIBLE!
-				Bold(true)
-
-	// Status bar styles - slightly elevated (nord1 bg)
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(nord3).
-			Background(nord1)
+			Foreground(colorAccent)
 
 	statsValueStyle = lipgloss.NewStyle().
-			Foreground(nord8) // Primary accent
+			Foreground(colorAccent)
 
 	statsLabelStyle = lipgloss.NewStyle().
-			Foreground(nord3) // Subtle
+			Foreground(colorDim)
 
 	statsHintStyle = lipgloss.NewStyle().
-			Foreground(nord12). // Orange - attention
+			Foreground(colorDim)
+
+	statsSeparatorStyle = lipgloss.NewStyle().
+				Foreground(nord2) // Very subtle separator
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// USER MESSAGES
+	// ═══════════════════════════════════════════════════════════════════════
+	userStyle = lipgloss.NewStyle().
+			Foreground(colorTextBold)
+
+	userPrefixStyle = lipgloss.NewStyle().
+			Foreground(colorSuccess).
+			Bold(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// ASSISTANT MESSAGES
+	// ═══════════════════════════════════════════════════════════════════════
+	assistantStyle = lipgloss.NewStyle().
+			Foreground(colorText)
+
+	thinkingStyle = lipgloss.NewStyle().
+			Foreground(colorDim).
 			Italic(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// TOOL CALLS & RESULTS
+	// ═══════════════════════════════════════════════════════════════════════
+	toolCallStyle = lipgloss.NewStyle().
+			Foreground(colorSpecial)
+
+	toolNameStyle = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
+	toolDescStyle = lipgloss.NewStyle().
+			Foreground(colorDim)
+
+	toolResultSuccessStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess)
+
+	toolResultErrorStyle = lipgloss.NewStyle().
+				Foreground(colorError)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// SYSTEM MESSAGES
+	// ═══════════════════════════════════════════════════════════════════════
+	errorStyle = lipgloss.NewStyle().
+			Foreground(colorError)
+
+	warningStyle = lipgloss.NewStyle().
+			Foreground(colorCaution)
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(colorSuccess)
+
+	infoStyle = lipgloss.NewStyle().
+			Foreground(colorAccent2)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PERMISSION PROMPT
+	// ═══════════════════════════════════════════════════════════════════════
+	permissionPromptStyle = lipgloss.NewStyle().
+				Foreground(colorCaution).
+				Bold(true)
+
+	permissionLevelReadStyle = lipgloss.NewStyle().
+					Foreground(colorAccent2)
+
+	permissionLevelWriteStyle = lipgloss.NewStyle().
+					Foreground(colorWarn)
+
+	permissionLevelExecStyle = lipgloss.NewStyle().
+					Foreground(colorError)
 )
 
-// Icons
+// Icons - minimal, consistent set
 const (
-	iconToolCall = "⚡"
-	iconSuccess  = "✓"
-	iconError    = "✗"
-	iconInfo     = "ℹ"
-	iconWarning  = "⚠"
-	iconUser     = ">"
-	iconIndent   = "│"
+	iconToolCall = "◆"  // Diamond for tool calls
+	iconSuccess  = "✓"  // Checkmark
+	iconError    = "✗"  // X mark
+	iconInfo     = "●"  // Bullet for info
+	iconWarning  = "!"  // Simple exclamation
+	iconUser     = ">"  // Prompt
+	iconArrowUp  = "↑"  // Upload/input tokens
+	iconArrowDn  = "↓"  // Download/output tokens
 )
 
-// Spinner frames (braille pattern)
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// Spinner frames (dots pattern - cleaner look)
+var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 
 // GetSpinnerFrame returns the current spinner frame
 func GetSpinnerFrame(frame int) string {

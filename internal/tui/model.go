@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -72,7 +73,7 @@ type Model struct {
 	ready     bool
 
 	// Content
-	blocks    []ContentBlock
+	blocks    *[]ContentBlock  // Pointer to survive model copies
 	streaming *strings.Builder // Pointer to survive model copies
 
 	// Components
@@ -134,10 +135,11 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ti.CharLimit = 0 // No limit
 	ti.Width = 50
 
+	blocks := make([]ContentBlock, 0)
 	return Model{
 		state:         StateStarting,
 		modelName:     modelName,
-		blocks:        []ContentBlock{},
+		blocks:        &blocks,             // Pointer survives model copies
 		streaming:     &strings.Builder{}, // Pointer survives model copies
 		streamChan:    streamChan,
 		resultChan:    make(chan PermissionResult, 1),
@@ -214,14 +216,14 @@ func (m Model) signalReady() tea.Cmd {
 
 // AddBlock adds a content block to the conversation
 func (m *Model) AddBlock(block ContentBlock) {
-	m.blocks = append(m.blocks, block)
+	*m.blocks = append(*m.blocks, block)
 	m.updateViewportContent()
 	m.scrollToBottom()
 }
 
 // ClearBlocks clears all content blocks
 func (m *Model) ClearBlocks() {
-	m.blocks = []ContentBlock{}
+	*m.blocks = []ContentBlock{}
 	m.streaming.Reset()
 	m.updateViewportContent()
 }
@@ -296,4 +298,34 @@ func (m *Model) DequeueInput() (string, bool) {
 // ClearQueue removes all items from the queue.
 func (m *Model) ClearQueue() {
 	m.inputQueue = m.inputQueue[:0]
+}
+
+// GetConversationText returns the conversation as plain text for copying
+func (m *Model) GetConversationText() string {
+	var b strings.Builder
+	for _, block := range *m.blocks {
+		switch block.Type {
+		case BlockUser:
+			b.WriteString("User: ")
+			b.WriteString(block.Content)
+			b.WriteString("\n\n")
+		case BlockAssistant:
+			b.WriteString("Assistant: ")
+			b.WriteString(block.Content)
+			b.WriteString("\n\n")
+		case BlockToolCall:
+			b.WriteString(fmt.Sprintf("[Tool: %s] %s\n", block.ToolName, block.Content))
+		case BlockToolResult:
+			if block.IsError {
+				b.WriteString(fmt.Sprintf("[Error: %s] %s\n", block.ToolName, block.Content))
+			} else if block.Content != "" && block.Content != "(no output)" {
+				b.WriteString(fmt.Sprintf("[Result: %s]\n%s\n\n", block.ToolName, block.Content))
+			}
+		case BlockError:
+			b.WriteString("Error: ")
+			b.WriteString(block.Content)
+			b.WriteString("\n\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }

@@ -28,6 +28,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.VecgrepPath != "vecgrep" {
 		t.Errorf("expected vecgrep path 'vecgrep', got %s", cfg.VecgrepPath)
 	}
+
+	if cfg.Provider != ProviderOllama {
+		t.Errorf("expected provider 'ollama', got %s", cfg.Provider)
+	}
+
+	if cfg.Ollama.BaseURL != "http://localhost:11434" {
+		t.Errorf("expected ollama base URL 'http://localhost:11434', got %s", cfg.Ollama.BaseURL)
+	}
 }
 
 func TestGetModel(t *testing.T) {
@@ -37,10 +45,10 @@ func TestGetModel(t *testing.T) {
 		tier     ModelTier
 		expected string
 	}{
-		{TierFast, "claude-haiku-4-5-20251001"},
-		{TierSmart, "claude-sonnet-4-5-20250929"},
-		{TierGenius, "claude-opus-4-5-20251101"},
-		{ModelTier("unknown"), "claude-sonnet-4-5-20250929"}, // default fallback
+		{TierFast, "qwen3:8b"},
+		{TierSmart, "qwen2.5-coder:7b"},
+		{TierGenius, "cogito:14b"},
+		{ModelTier("unknown"), "qwen2.5-coder:7b"}, // default fallback
 	}
 
 	for _, tt := range tests {
@@ -57,7 +65,7 @@ func TestGetDefaultModel(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultTier = TierFast
 
-	expected := "claude-haiku-4-5-20251001"
+	expected := "qwen3:8b"
 	if got := cfg.GetDefaultModel(); got != expected {
 		t.Errorf("GetDefaultModel() = %s, want %s", got, expected)
 	}
@@ -82,6 +90,11 @@ max_tokens: 4096
 temperature: 0.5
 skills_dir: custom_skills
 vecgrep_path: /usr/local/bin/vecgrep
+ollama:
+  base_url: "http://localhost:11434"
+  model_fast: "llama3:8b"
+  model_smart: "codellama:13b"
+  model_genius: "mixtral:8x7b"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -107,33 +120,49 @@ vecgrep_path: /usr/local/bin/vecgrep
 	if cfg.SkillsDir != "custom_skills" {
 		t.Errorf("expected skills dir 'custom_skills', got %s", cfg.SkillsDir)
 	}
-}
 
-func TestLoadRequiresAPIKey(t *testing.T) {
-	// Unset API key
-	original := os.Getenv("ANTHROPIC_API_KEY")
-	_ = os.Unsetenv("ANTHROPIC_API_KEY")
-	defer func() { _ = os.Setenv("ANTHROPIC_API_KEY", original) }()
-
-	_, err := Load()
-	if err == nil {
-		t.Error("expected error when ANTHROPIC_API_KEY is not set")
+	if cfg.Ollama.ModelFast != "llama3:8b" {
+		t.Errorf("expected ollama model_fast 'llama3:8b', got %s", cfg.Ollama.ModelFast)
 	}
 }
 
-func TestLoadWithAPIKey(t *testing.T) {
-	// Set API key
-	original := os.Getenv("ANTHROPIC_API_KEY")
-	_ = os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	defer func() { _ = os.Setenv("ANTHROPIC_API_KEY", original) }()
+func TestLoadWithOllamaHostEnv(t *testing.T) {
+	// Set Ollama host env
+	original := os.Getenv("OLLAMA_HOST")
+	_ = os.Setenv("OLLAMA_HOST", "http://custom-ollama:11434")
+	defer func() {
+		if original != "" {
+			_ = os.Setenv("OLLAMA_HOST", original)
+		} else {
+			_ = os.Unsetenv("OLLAMA_HOST")
+		}
+	}()
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if cfg.APIKey != "test-key" {
-		t.Errorf("expected API key 'test-key', got %s", cfg.APIKey)
+	if cfg.Ollama.BaseURL != "http://custom-ollama:11434" {
+		t.Errorf("expected Ollama base URL from env, got %s", cfg.Ollama.BaseURL)
+	}
+}
+
+func TestLoadWithOverrides(t *testing.T) {
+	cfg, err := LoadWithOptions(LoadOptions{
+		BaseURLOverride: "http://override:11434",
+		ModelOverride:   "custom-model:7b",
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions failed: %v", err)
+	}
+
+	if cfg.Ollama.BaseURL != "http://override:11434" {
+		t.Errorf("expected base URL override, got %s", cfg.Ollama.BaseURL)
+	}
+
+	if cfg.Ollama.ModelFast != "custom-model:7b" {
+		t.Errorf("expected model override, got %s", cfg.Ollama.ModelFast)
 	}
 }
 

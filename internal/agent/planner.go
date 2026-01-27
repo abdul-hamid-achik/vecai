@@ -103,9 +103,14 @@ type Plan struct {
 
 // PlanStep represents a single step in the plan
 type PlanStep struct {
-	Name        string
-	Description string
-	Status      string // pending, in_progress, completed, failed
+	ID           string   // Unique identifier
+	Name         string
+	Description  string
+	Type         string   // "code", "test", "verify", "read"
+	Status       string   // pending, in_progress, completed, failed
+	Files        []string // Files this step will touch
+	Dependencies []string // IDs of steps that must complete first
+	Done         bool     // Whether the step is complete
 }
 
 // createPlan generates an initial plan

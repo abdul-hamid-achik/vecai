@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	ctxmgr "github.com/abdul-hamid-achik/vecai/internal/context"
+	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
@@ -86,8 +88,9 @@ vecgrep uses semantic embeddings that understand code MEANING, not just text mat
 6. Ask clarifying questions if the request is ambiguous
 
 ## Response Format
-- Format code blocks with language specifiers
-- Use bullet points for lists
+- Format code blocks with language specifiers (e.g., ` + "```" + `go)
+- Use proper markdown lists: "1. Item" (with dot and space), "- Item" (with space after dash)
+- Use **bold** for emphasis, not plain text
 - Reference file paths and line numbers when discussing code`
 
 // Config holds agent configuration
@@ -210,7 +213,7 @@ func (a *Agent) Run(query string) error {
 	logger.Debug("Run: query=%q, isTTY=%v", query, isTTY)
 	if isTTY {
 		logger.Debug("Run: using TUI mode")
-		return a.RunTUI(query, false) // Single query, don't stay open
+		return a.RunTUI(query, true) // Stay open for follow-up queries
 	}
 	logger.Debug("Run: using line-based mode (no TTY)")
 	return a.runLineBased(query)
@@ -240,7 +243,7 @@ func (a *Agent) runLineBased(query string) error {
 
 // RunTUI runs the agent with the TUI interface
 // initialQuery: optional query to execute immediately after TUI is ready
-// interactive: if true, stay open for follow-up queries; if false, quit after initial query
+// interactive: if true, stay open for follow-up queries; if false, quit after initial query (deprecated, always stays open now)
 func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 	logger.Debug("RunTUI called: query=%q, interactive=%v", initialQuery, interactive)
 
@@ -248,9 +251,6 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
 	logger.Debug("TUI runner created")
-
-	// Track completion for single-query mode
-	done := make(chan error, 1)
 
 	// Set up the onReady callback to execute initial query
 	if initialQuery != "" {
@@ -262,6 +262,9 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 				// Add user message block first
 				adapter.Info("> " + initialQuery)
 
+				// Set processing state to show spinner
+				adapter.Activity("Processing...")
+
 				// Execute the query
 				logger.Debug("Calling runWithTUIOutput")
 				err := a.runWithTUIOutput(initialQuery, adapter)
@@ -270,13 +273,7 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 					adapter.Error(err)
 				}
 				logger.Debug("Query execution complete")
-
-				// If not interactive, quit after query completes
-				if !interactive {
-					logger.Debug("Single-query mode - sending done signal and quitting")
-					done <- err
-					runner.Quit()
-				}
+				// Stay open for follow-up queries
 			}()
 		})
 		logger.Debug("onReady callback registered")
@@ -317,22 +314,8 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 
 	// Header already shows "vecai" and model - no need for welcome message
 
-	// Run TUI - this blocks until quit
-	if err := runner.Run(); err != nil {
-		return err
-	}
-
-	// For single-query mode, return the query result error if any
-	if !interactive && initialQuery != "" {
-		select {
-		case err := <-done:
-			return err
-		default:
-			return nil
-		}
-	}
-
-	return nil
+	// Run TUI - this blocks until user quits
+	return runner.Run()
 }
 
 // RunInteractive starts interactive mode
@@ -458,13 +441,6 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 
 	// Track current query for smart tool selection
 	a.currentQuery = query
-
-	// Set TUI-aware rate limit callback if client supports it
-	if rlClient, ok := a.llm.(*llm.RateLimitedClient); ok {
-		rlClient.SetWaitCallback(func(ctx context.Context, info llm.WaitInfo) error {
-			return adapter.WaitForRateLimit(ctx, info.Duration, info.Reason, info.Attempt, info.MaxAttempts)
-		})
-	}
 
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
@@ -706,8 +682,12 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 	var results []toolResult
 
 	for _, call := range calls {
+		// Log tool call to debug tracer
+		debug.ToolCall(call.Name, call.Input)
+
 		tool, ok := a.tools.Get(call.Name)
 		if !ok {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Unknown tool: %s", call.Name),
@@ -722,6 +702,7 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		// Check permission FIRST (before showing tool call)
 		allowed, err := a.checkPermissionTUI(call.Name, tool.Permission(), description, adapter)
 		if err != nil {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Permission error: %s", err),
@@ -732,6 +713,7 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		}
 
 		if !allowed {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: "Permission denied by user",
@@ -747,6 +729,7 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		// Execute tool
 		result, err := tool.Execute(ctx, call.Input)
 		if err != nil {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Error: %s", err),
@@ -754,6 +737,7 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 			})
 			adapter.ToolResult(call.Name, err.Error(), true)
 		} else {
+			debug.ToolResult(call.Name, true, len(result))
 			// Store in cache if result is large and we're in analysis mode
 			contextResult := result
 			if a.resultCache != nil && ctxmgr.ShouldCache(result) {
@@ -833,6 +817,7 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 	case "/help":
 		runner.SendInfo("Commands:")
 		runner.SendInfo("  /help            Show this help")
+		runner.SendInfo("  /copy            Copy conversation to clipboard")
 		runner.SendInfo("  /mode <tier>     Switch model (fast/smart/genius)")
 		runner.SendInfo("  /plan <goal>     Enter plan mode")
 		runner.SendInfo("  /skills          List available skills")
@@ -844,9 +829,10 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.SendInfo("  /resume [id]     Resume a session (last if no id)")
 		runner.SendInfo("  /new             Start a new session")
 		runner.SendInfo("  /delete <id>     Delete a session")
-		runner.SendInfo("  /debug <on|off>  Toggle debug logging")
 		runner.SendInfo("  /clear           Clear conversation")
 		runner.SendInfo("  /exit            Exit interactive mode")
+		runner.SendInfo("")
+		runner.SendInfo("Debug: Set VECAI_DEBUG=1 environment variable")
 		return true
 
 	case "/exit", "/quit":
@@ -859,6 +845,26 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.GetAdapter().Clear()
 		runner.ClearQueue()
 		runner.SendSuccess("Conversation and queue cleared")
+		return true
+
+	case "/copy":
+		text := runner.GetConversationText()
+		if text == "" {
+			runner.SendInfo("No conversation to copy")
+			return true
+		}
+
+		if err := copyToClipboard(text); err != nil {
+			// Fallback: save to file
+			filename := fmt.Sprintf("vecai-conversation-%s.txt", time.Now().Format("20060102-150405"))
+			if err := os.WriteFile(filename, []byte(text), 0644); err != nil {
+				runner.SendError("Failed to copy: " + err.Error())
+				return true
+			}
+			runner.SendSuccess(fmt.Sprintf("Saved conversation to %s", filename))
+			return true
+		}
+		runner.SendSuccess("Conversation copied to clipboard")
 		return true
 
 	case "/context":
@@ -943,23 +949,6 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 			runner.SendError("Reindex failed: " + err.Error())
 		} else {
 			runner.SendSuccess(result)
-		}
-		return true
-
-	case "/debug":
-		if len(parts) < 2 {
-			runner.SendInfo("Usage: /debug <on|off>")
-			return true
-		}
-		switch parts[1] {
-		case "on":
-			logger.SetLevel(logger.LevelDebug)
-			runner.SendSuccess("Debug logging enabled")
-		case "off":
-			logger.SetLevel(logger.LevelInfo)
-			runner.SendSuccess("Debug logging disabled")
-		default:
-			runner.SendError("Usage: /debug <on|off>")
 		}
 		return true
 
@@ -1568,8 +1557,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 	var results []toolResult
 
 	for _, call := range calls {
+		// Log tool call to debug tracer
+		debug.ToolCall(call.Name, call.Input)
+
 		tool, ok := a.tools.Get(call.Name)
 		if !ok {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Unknown tool: %s", call.Name),
@@ -1585,6 +1578,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		// Check permission
 		allowed, err := a.permissions.Check(call.Name, tool.Permission(), description)
 		if err != nil {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Permission error: %s", err),
@@ -1595,6 +1589,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		}
 
 		if !allowed {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: "Permission denied by user",
@@ -1607,6 +1602,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		// Execute tool
 		result, err := tool.Execute(ctx, call.Input)
 		if err != nil {
+			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
 				Name:   call.Name,
 				Result: fmt.Sprintf("Error: %s", err),
@@ -1614,6 +1610,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 			})
 			a.output.ToolResult(call.Name, err.Error(), true)
 		} else {
+			debug.ToolResult(call.Name, true, len(result))
 			// Store in cache if result is large and we're in analysis mode
 			contextResult := result
 			if a.resultCache != nil && ctxmgr.ShouldCache(result) {
@@ -1765,4 +1762,37 @@ func (a *Agent) ClearHistory() {
 // GetHistory returns conversation history
 func (a *Agent) GetHistory() []llm.Message {
 	return a.contextMgr.GetMessages()
+}
+
+// copyToClipboard copies text to system clipboard
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		if _, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		} else {
+			cmd = exec.Command("xsel", "--clipboard", "--input")
+		}
+	default:
+		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if _, err := stdin.Write([]byte(text)); err != nil {
+		stdin.Close()
+		return err
+	}
+	if err := stdin.Close(); err != nil {
+		return err
+	}
+	return cmd.Wait()
 }

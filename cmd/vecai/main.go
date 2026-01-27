@@ -1,13 +1,13 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/agent"
 	"github.com/abdul-hamid-achik/vecai/internal/config"
+	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
@@ -21,6 +21,14 @@ var Version = "dev"
 func main() {
 	// Ensure log file is closed on exit
 	defer logger.CloseLogFile()
+
+	// Initialize debug tracer from env var
+	if os.Getenv("VECAI_DEBUG") == "1" {
+		if err := debug.Init(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to init debug tracer: %v\n", err)
+		}
+		defer debug.Close()
+	}
 
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -47,25 +55,37 @@ func run() error {
 		return nil
 	}
 
-	// Parse --token flag before config load
-	var token string
+	// Parse CLI flags
+	var loadOpts config.LoadOptions
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--token" && i+1 < len(args) {
-			token = args[i+1]
+		if args[i] == "--model" && i+1 < len(args) {
+			loadOpts.ModelOverride = args[i+1]
 			args = append(args[:i], args[i+2:]...)
-			break
+			i--
+			continue
 		}
-		if strings.HasPrefix(args[i], "--token=") {
-			token = strings.TrimPrefix(args[i], "--token=")
+		if strings.HasPrefix(args[i], "--model=") {
+			loadOpts.ModelOverride = strings.TrimPrefix(args[i], "--model=")
 			args = append(args[:i], args[i+1:]...)
-			break
+			i--
+			continue
+		}
+		if args[i] == "--ollama-url" && i+1 < len(args) {
+			loadOpts.BaseURLOverride = args[i+1]
+			args = append(args[:i], args[i+2:]...)
+			i--
+			continue
+		}
+		if strings.HasPrefix(args[i], "--ollama-url=") {
+			loadOpts.BaseURLOverride = strings.TrimPrefix(args[i], "--ollama-url=")
+			args = append(args[:i], args[i+1:]...)
+			i--
+			continue
 		}
 	}
 
-	// Load configuration with token override
-	cfg, err := config.LoadWithOptions(config.LoadOptions{
-		TokenOverride: token,
-	})
+	// Load configuration
+	cfg, err := config.LoadWithOptions(loadOpts)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -95,27 +115,9 @@ func run() error {
 	// Initialize components
 	output := ui.NewOutputHandler()
 	input := ui.NewInputHandler()
-	baseClient := llm.NewClient(cfg)
 
-	// Wrap with rate limiting if enabled
-	var llmClient llm.LLMClient = baseClient
-	if cfg.RateLimit.EnableRateLimiting {
-		rateLimitedClient := llm.NewRateLimitedClient(baseClient, &cfg.RateLimit)
-
-		// Set up spinner for rate limit feedback
-		spinner := ui.NewSpinner(output)
-		rateLimitedClient.SetWaitCallback(func(ctx context.Context, info llm.WaitInfo) error {
-			return spinner.Start(ctx, ui.SpinnerConfig{
-				Message:     "Rate limited",
-				Reason:      info.Reason,
-				Duration:    info.Duration,
-				Attempt:     info.Attempt,
-				MaxAttempts: info.MaxAttempts,
-			})
-		})
-
-		llmClient = rateLimitedClient
-	}
+	// Create Ollama client
+	llmClient := llm.NewClient(cfg)
 
 	// Select registry based on mode
 	var registry *tools.Registry
@@ -174,7 +176,7 @@ func joinArgs(args []string) string {
 }
 
 func printHelp() {
-	fmt.Print(`vecai - AI-powered codebase assistant
+	fmt.Print(`vecai - Local AI-powered codebase assistant (Ollama)
 
 Usage:
   vecai [query]           Run a one-shot query
@@ -184,7 +186,8 @@ Usage:
   vecai help              Show this help
 
 Flags:
-  --token <key>           API key (overrides ANTHROPIC_API_KEY env var)
+  --model <name>          Override model (e.g., "qwen3:8b", "cogito:14b")
+  --ollama-url <url>      Override Ollama URL (default: http://localhost:11434)
   --auto                  Auto-approve all tool executions
   --strict                Prompt for all tool executions (including reads)
   --analyze, -a           Token-efficient analysis mode (read-only, minimal prompt)
@@ -205,12 +208,25 @@ Interactive Commands:
   /clear                  Clear conversation
   /exit                   Exit interactive mode
 
+Model Tiers (default models):
+  fast     qwen3:8b          Fast responses, good for simple tasks
+  smart    qwen2.5-coder:7b  Balanced, code-focused
+  genius   cogito:14b        Most capable, complex reasoning
+
 Environment:
-  ANTHROPIC_API_KEY       API key (can be overridden with --token flag)
+  OLLAMA_HOST             Ollama server URL (overrides config)
+  VECAI_DEBUG=1           Enable debug tracing to /tmp/vecai-debug/
+  VECAI_DEBUG_DIR         Override debug log directory
+  VECAI_DEBUG_LLM=1       Enable full LLM payload logging
 
 Config Files (in priority order):
   ./vecai.yaml
   ./.vecai/config.yaml
   ~/.config/vecai/config.yaml
+
+Prerequisites:
+  1. Install Ollama: https://ollama.ai
+  2. Start Ollama: ollama serve
+  3. Pull a model: ollama pull qwen3:8b
 `)
 }
