@@ -325,7 +325,7 @@ func (s *SolutionCache) parseSolution(content string) *Solution {
 				sol.Tags = strings.Split(tags, ",")
 			}
 		} else if strings.HasPrefix(line, "USE_COUNT:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "USE_COUNT:"), "%d", &sol.UseCount)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "USE_COUNT:"), "%d", &sol.UseCount)
 		} else if strings.HasPrefix(line, "CREATED:") {
 			sol.CreatedAt, _ = time.Parse(time.RFC3339, strings.TrimPrefix(line, "CREATED:"))
 		} else if strings.HasPrefix(line, "LAST_USED:") {

@@ -312,9 +312,10 @@ func (v *VerifierAgent) generateSummary(result *VerificationResult) string {
 	errorCount := 0
 	warningCount := 0
 	for _, issue := range result.Issues {
-		if issue.Severity == "error" {
+		switch issue.Severity {
+		case "error":
 			errorCount++
-		} else if issue.Severity == "warning" {
+		case "warning":
 			warningCount++
 		}
 	}

@@ -1788,7 +1788,7 @@ func copyToClipboard(text string) error {
 		return err
 	}
 	if _, err := stdin.Write([]byte(text)); err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return err
 	}
 	if err := stdin.Close(); err != nil {

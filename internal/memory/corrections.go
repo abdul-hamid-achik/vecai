@@ -239,9 +239,9 @@ func (c *CorrectionMemory) parseCorrection(content string) *Correction {
 		} else if strings.HasPrefix(line, "CONTEXT:") {
 			corr.Context = strings.TrimPrefix(line, "CONTEXT:")
 		} else if strings.HasPrefix(line, "USE_COUNT:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "USE_COUNT:"), "%d", &corr.UseCount)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "USE_COUNT:"), "%d", &corr.UseCount)
 		} else if strings.HasPrefix(line, "SUCCESS_RATE:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "SUCCESS_RATE:"), "%f", &corr.SuccessRate)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "SUCCESS_RATE:"), "%f", &corr.SuccessRate)
 		} else if strings.HasPrefix(line, "CREATED:") {
 			corr.CreatedAt, _ = time.Parse(time.RFC3339, strings.TrimPrefix(line, "CREATED:"))
 		} else if strings.HasPrefix(line, "LAST_USED:") {

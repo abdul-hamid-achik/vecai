@@ -107,15 +107,15 @@ func Init() error {
 		llmPath := filepath.Join(debugDir, fmt.Sprintf("llm_%s.jsonl", timestamp))
 		llmFile, err = os.OpenFile(llmPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			sessionFile.Close()
+			_ = sessionFile.Close()
 			return fmt.Errorf("failed to create LLM file: %w", err)
 		}
 	}
 
 	// Create symlink to latest session file
 	latestPath := filepath.Join(debugDir, "latest.jsonl")
-	os.Remove(latestPath) // Remove existing symlink
-	os.Symlink(sessionPath, latestPath)
+	_ = os.Remove(latestPath) // Remove existing symlink
+	_ = os.Symlink(sessionPath, latestPath)
 
 	tracer := &Tracer{
 		sessionID:   sessionID,
@@ -298,10 +298,10 @@ func Close() {
 	})
 
 	if globalTracer.sessionFile != nil {
-		globalTracer.sessionFile.Close()
+		_ = globalTracer.sessionFile.Close()
 	}
 	if globalTracer.llmFile != nil {
-		globalTracer.llmFile.Close()
+		_ = globalTracer.llmFile.Close()
 	}
 
 	globalTracer = nil
@@ -328,8 +328,8 @@ func (t *Tracer) logEvent(eventType string, data map[string]any) {
 		return
 	}
 
-	t.sessionFile.Write(line)
-	t.sessionFile.Write([]byte("\n"))
+	_, _ = t.sessionFile.Write(line)
+	_, _ = t.sessionFile.Write([]byte("\n"))
 }
 
 // logLLMPayload writes full LLM payload to the LLM file
@@ -354,21 +354,21 @@ func (t *Tracer) logLLMPayload(payloadType, requestID string, data map[string]an
 		return
 	}
 
-	t.llmFile.Write(line)
-	t.llmFile.Write([]byte("\n"))
+	_, _ = t.llmFile.Write(line)
+	_, _ = t.llmFile.Write([]byte("\n"))
 }
 
 // generateSessionID creates a unique session identifier
 func generateSessionID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return "sess_" + hex.EncodeToString(b)
 }
 
 // GenerateRequestID creates a unique request identifier for LLM calls
 func GenerateRequestID() string {
 	b := make([]byte, 6)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return "req_" + hex.EncodeToString(b)
 }
 

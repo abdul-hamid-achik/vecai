@@ -128,7 +128,7 @@ func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 	if err != nil {
 		return ErrOllamaUnavailable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return ErrOllamaUnavailable
@@ -193,7 +193,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	if err != nil {
 		return nil, fmt.Errorf("ollama request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	respBody, err := io.ReadAll(resp.Body)
@@ -302,7 +302,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 			ch <- StreamChunk{Type: "error", Error: fmt.Errorf("ollama request failed: %w", err)}
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Check for HTTP errors
 		if resp.StatusCode != http.StatusOK {
