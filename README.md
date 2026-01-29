@@ -1,21 +1,28 @@
 # vecai
 
-AI-powered codebase assistant that combines semantic search with Claude's intelligence to help you understand, navigate, and modify code.
+AI-powered codebase assistant that combines semantic search with local LLM intelligence to help you understand, navigate, and modify code.
 
 ## Features
 
 - **Semantic Code Search** - Find code by meaning, not just keywords (via vecgrep)
-- **Multiple Model Tiers** - Choose between Haiku (fast), Sonnet (smart), or Opus (genius)
-- **Plan Mode** - Break down complex tasks into steps with interactive questionnaires
+- **Local LLM** - Runs entirely on Ollama, no cloud API required
+- **Multiple Model Tiers** - Choose between fast, smart, or genius modes
+- **Rich TUI** - Full-featured terminal interface with input queue and visual feedback
+- **Plan Mode** - Break down complex tasks into steps with interactive planning
+- **Session Management** - Save, resume, and manage conversation sessions
 - **Permission System** - Control what the AI can read, write, or execute
 - **Skills** - Customizable prompts for common tasks like code review
-- **Rate Limiting** - Built-in rate limiting with exponential backoff to prevent API errors
+- **Analysis Mode** - Token-efficient read-only mode for code reviews
+- **Context Management** - Auto-compaction to handle long conversations
 
 ## Quick Start
 
 ```bash
-# Set your API key
-export ANTHROPIC_API_KEY="your-key"
+# Start Ollama
+ollama serve
+
+# Pull a model
+ollama pull qwen3:8b
 
 # Run a query
 vecai "explain how authentication works in this codebase"
@@ -56,9 +63,9 @@ task build
 
 ### Prerequisites
 
-- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) (optional, for semantic search)
-- [gpeek](https://github.com/abdul-hamid-achik/gpeek) (optional, for git visualization)
-- Anthropic API key
+- [Ollama](https://ollama.ai) - Local LLM server (required)
+- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) - Semantic code search (optional)
+- [gpeek](https://github.com/abdul-hamid-achik/gpeek) - Git visualization (optional)
 
 ### Verify Installation
 
@@ -80,23 +87,31 @@ vecai "explain the error handling in this project"
 
 ### Interactive Mode
 
-Start a conversation:
+Start a conversation with the full TUI:
 
 ```bash
 vecai
 ```
 
-Then use these commands:
+Interactive commands:
 
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/mode fast` | Switch to Haiku (faster, cheaper) |
-| `/mode smart` | Switch to Sonnet (balanced) |
-| `/mode genius` | Switch to Opus (most capable) |
+| `/mode fast` | Switch to fast model (qwen3:8b) |
+| `/mode smart` | Switch to smart model (qwen2.5-coder:7b) |
+| `/mode genius` | Switch to genius model (cogito:14b) |
 | `/plan <goal>` | Enter plan mode |
 | `/skills` | List available skills |
 | `/status` | Check vecgrep index status |
+| `/reindex` | Update vecgrep search index |
+| `/context` | Show context usage breakdown |
+| `/compact [focus]` | Compact conversation history |
+| `/sessions` | List saved sessions |
+| `/resume [id]` | Resume a previous session |
+| `/new` | Start a new session |
+| `/delete <id>` | Delete a session |
+| `/copy` | Copy conversation to clipboard |
 | `/clear` | Clear conversation history |
 | `/exit` | Exit interactive mode |
 
@@ -114,6 +129,21 @@ Plan mode will:
 3. Create a step-by-step plan
 4. Execute with your approval
 
+### Analysis Mode
+
+Token-efficient read-only mode for code reviews:
+
+```bash
+vecai --analyze "review the authentication module"
+vecai -a "check for security issues"
+```
+
+Analysis mode:
+- Uses only read-only tools (no writes or executes)
+- Optimized prompts for lower token usage
+- Aggressive context compaction
+- Ideal for large codebase reviews
+
 ### Permission Modes
 
 Control tool execution:
@@ -127,6 +157,9 @@ vecai --auto "fix all lint errors"
 
 # Prompt for everything including reads
 vecai --strict "review security"
+
+# Analysis mode: read-only, block all writes
+vecai --analyze "review this code"
 ```
 
 ## Configuration
@@ -139,8 +172,19 @@ vecai looks for configuration in this order:
 ### Example Configuration
 
 ```yaml
-# Model tier: fast (Haiku), smart (Sonnet), genius (Opus)
-default_tier: smart
+# Provider (currently only ollama is supported)
+provider: ollama
+
+# Ollama settings
+ollama:
+  base_url: "http://localhost:11434"
+  model_fast: "qwen3:8b"
+  model_smart: "qwen2.5-coder:7b"
+  model_genius: "cogito:14b"
+  keep_alive: "5m"
+
+# Default model tier: fast, smart, or genius
+default_tier: fast
 
 # Maximum tokens in response
 max_tokens: 8192
@@ -154,20 +198,43 @@ skills_dir: skills
 # Path to vecgrep binary
 vecgrep_path: vecgrep
 
-# Rate limiting configuration
-rate_limit:
-  max_retries: 5           # Retry attempts on rate limit errors
-  base_delay: 1s           # Initial backoff delay
-  max_delay: 60s           # Maximum backoff delay
-  tokens_per_minute: 30000 # Proactive rate limit threshold
-  enable_rate_limiting: true
+# Context management
+context:
+  auto_compact_threshold: 0.95    # Auto-compact at 95% context usage
+  warn_threshold: 0.80            # Warn at 80% context usage
+  preserve_last: 4                # Keep last 4 messages when compacting
+  enable_auto_compact: true
+  context_window: 32768           # Token limit for model
+
+# Token-efficient analysis mode
+analysis:
+  enabled: false
+  max_file_tokens: 2000
+  aggressive_compaction: true
+  smart_tool_selection: true
 ```
 
 ### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
+| `OLLAMA_HOST` | No | Ollama server URL (overrides config) |
+| `VECAI_DEBUG` | No | Set to "1" to enable debug tracing |
+| `VECAI_DEBUG_DIR` | No | Override debug log directory |
+| `VECAI_DEBUG_LLM` | No | Set to "1" to log full LLM payloads |
+| `TAVILY_API_KEY` | No | API key for web search tool |
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--model <name>` | Override model (e.g., "qwen3:8b", "cogito:14b") |
+| `--ollama-url <url>` | Override Ollama URL (default: http://localhost:11434) |
+| `--auto` | Auto-approve all tool executions |
+| `--strict` | Prompt for all tool executions (including reads) |
+| `--analyze, -a` | Token-efficient analysis mode (read-only) |
+| `-v, --version` | Show version |
+| `-h, --help` | Show help |
 
 ## Tools
 
@@ -184,6 +251,15 @@ vecai can use these tools to interact with your codebase:
 | `edit_file` | Write | Make targeted edits |
 | `bash` | Execute | Run shell commands |
 
+### Go-Specific Tools
+
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `ast` | Read | Parse and analyze Go AST |
+| `lsp` | Read | Go language server queries |
+| `linter` | Read | Run golangci-lint |
+| `test` | Execute | Run Go tests |
+
 ### Semantic Search (vecgrep)
 
 | Tool | Permission | Description |
@@ -195,16 +271,22 @@ vecai can use these tools to interact with your codebase:
 
 | Tool | Permission | Description |
 |------|------------|-------------|
-| `gpeek_status` | Read | Repository status (staged/unstaged/untracked) |
+| `gpeek_status` | Read | Repository status |
 | `gpeek_diff` | Read | Structured diffs with hunks |
 | `gpeek_log` | Read | Commit history with filters |
-| `gpeek_summary` | Read | Complete repo snapshot (ideal for AI) |
+| `gpeek_summary` | Read | Complete repo snapshot |
 | `gpeek_blame` | Read | Line-by-line attribution |
 | `gpeek_branches` | Read | List branches |
 | `gpeek_stashes` | Read | List stashes |
 | `gpeek_tags` | Read | List tags |
 | `gpeek_changes_between` | Read | Changes between refs |
 | `gpeek_conflict_check` | Read | Predict merge conflicts |
+
+### Web Search
+
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `web_search` | Read | Search the web (requires Tavily API key) |
 
 ## Skills
 
@@ -246,21 +328,24 @@ Skills are loaded from:
 2. `./.vecai/skills/`
 3. `~/.config/vecai/skills/`
 
-For detailed skill development documentation, see [docs/SKILLS.md](docs/SKILLS.md).
-
 ## Model Tiers
 
-| Tier | Model | Best For |
-|------|-------|----------|
-| `fast` | Claude Haiku | Quick questions, simple tasks |
-| `smart` | Claude Sonnet | Most tasks, good balance |
-| `genius` | Claude Opus | Complex reasoning, architecture |
+| Tier | Default Model | Best For |
+|------|---------------|----------|
+| `fast` | qwen3:8b | Quick questions, simple tasks |
+| `smart` | qwen2.5-coder:7b | Most tasks, good balance |
+| `genius` | cogito:14b | Complex reasoning, architecture |
 
 Switch tiers in interactive mode:
 ```
 /mode fast
 /mode smart
 /mode genius
+```
+
+Or override via CLI:
+```bash
+vecai --model cogito:14b "explain the architecture"
 ```
 
 ## Semantic Search Setup
@@ -284,38 +369,6 @@ vecai /status
 ```
 
 Without vecgrep, vecai still works but uses pattern-based search only.
-
-## Rate Limiting
-
-vecai includes built-in rate limiting to prevent hitting Anthropic API rate limits (429 errors). This is enabled by default and works automatically.
-
-### How It Works
-
-1. **Proactive Rate Limiting** - Estimates token usage and throttles requests before hitting limits
-2. **SDK Retries** - Configures the Anthropic SDK with automatic retries
-3. **Exponential Backoff** - When rate limits are hit, retries with increasing delays plus jitter
-
-### Configuration
-
-Rate limiting can be customized in your config file:
-
-```yaml
-rate_limit:
-  max_retries: 5           # Number of retry attempts (default: 5)
-  base_delay: 1s           # Initial backoff delay (default: 1s)
-  max_delay: 60s           # Maximum backoff delay (default: 60s)
-  tokens_per_minute: 30000 # Token rate limit threshold (default: 30000)
-  enable_rate_limiting: true # Enable/disable rate limiting (default: true)
-```
-
-### Disabling Rate Limiting
-
-If you have higher API limits or prefer to handle rate limiting differently:
-
-```yaml
-rate_limit:
-  enable_rate_limiting: false
-```
 
 ## Git Visualization Setup
 
@@ -358,13 +411,13 @@ vecai "explain the data flow from API to database"
 ```bash
 vecai "add input validation to the user registration endpoint"
 vecai "refactor the database connection to use connection pooling"
-vecai --auto "fix all TypeScript type errors"
+vecai --auto "fix all lint errors"
 ```
 
 ### Code Review
 
 ```bash
-vecai "review the authentication module for security issues"
+vecai --analyze "review the authentication module for security issues"
 # Or trigger the skill automatically:
 vecai "review this code"
 ```
@@ -385,16 +438,37 @@ vecai "show me the last 5 commits"
 vecai "who last modified the auth module?"
 vecai "what changed between v1.0 and HEAD?"
 vecai "will merging feature-branch into main cause conflicts?"
-vecai "give me a complete summary of this repository"
+```
+
+### Session Management
+
+```bash
+# Start a session (sessions auto-save)
+vecai
+
+# List saved sessions
+/sessions
+
+# Resume a previous session
+/resume abc123
+
+# Start fresh
+/new
 ```
 
 ## Troubleshooting
 
-### "ANTHROPIC_API_KEY environment variable is required"
+### "Ollama connection failed"
 
-Set your API key:
+Make sure Ollama is running:
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+ollama serve
+```
+
+And verify you have a model pulled:
+```bash
+ollama list
+ollama pull qwen3:8b
 ```
 
 ### "vecgrep is not initialized"
@@ -416,19 +490,31 @@ Switch to a faster model:
 /mode fast
 ```
 
-### Rate Limit Errors (429)
+Or use a smaller Ollama model:
+```bash
+vecai --model qwen3:4b "quick question"
+```
 
-vecai handles rate limits automatically with retries and backoff. If you still see errors:
+### High Memory Usage
 
-1. **Wait and retry** - Rate limits reset over time
-2. **Reduce request frequency** - Space out your queries
-3. **Adjust configuration** - Increase `max_retries` or `max_delay`:
-   ```yaml
-   rate_limit:
-     max_retries: 10
-     max_delay: 120s
-   ```
-4. **Check your API tier** - Higher tiers have higher rate limits
+Compact the conversation context:
+```
+/compact
+```
+
+Or start a new session:
+```
+/new
+```
+
+### Debug Mode
+
+Enable debug logging to troubleshoot issues:
+```bash
+VECAI_DEBUG=1 vecai "your query"
+```
+
+Debug logs are written to `/tmp/vecai-debug/` by default.
 
 ## Development
 
@@ -447,13 +533,17 @@ task clean      # Remove build artifacts
 vecai/
 ├── cmd/vecai/          # CLI entry point
 ├── internal/
-│   ├── agent/          # Core agent logic
-│   ├── config/         # Configuration
-│   ├── llm/            # Anthropic SDK wrapper
+│   ├── agent/          # Core agent logic and planning
+│   ├── config/         # Configuration management
+│   ├── context/        # Context and token management
+│   ├── llm/            # Ollama client
+│   ├── memory/         # Persistent memory layer
 │   ├── permissions/    # Permission system
+│   ├── session/        # Session persistence
 │   ├── skills/         # Skill loader
 │   ├── tools/          # Tool implementations
-│   └── ui/             # Terminal UI
+│   ├── tui/            # Terminal UI (BubbleTea)
+│   └── ui/             # Terminal output helpers
 ├── skills/             # Built-in skills
 ├── Taskfile.yml        # Build tasks
 └── go.mod              # Dependencies
