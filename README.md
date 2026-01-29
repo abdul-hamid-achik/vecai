@@ -264,8 +264,22 @@ vecai can use these tools to interact with your codebase:
 
 | Tool | Permission | Description |
 |------|------------|-------------|
-| `vecgrep_search` | Read | Semantic code search |
+| `vecgrep_search` | Read | Semantic, keyword, or hybrid code search with rich filtering |
+| `vecgrep_similar` | Read | Find similar code patterns by snippet, location, or chunk ID |
 | `vecgrep_status` | Read | Check search index status |
+| `vecgrep_index` | Write | Index or re-index files for semantic search |
+| `vecgrep_clean` | Write | Remove orphaned data and optimize the database |
+| `vecgrep_delete` | Write | Delete a file from the search index |
+| `vecgrep_init` | Write | Initialize vecgrep in the current project |
+
+**Search Modes:**
+- `hybrid` - Combines vector similarity with keyword matching (default)
+- `semantic` - Pure vector similarity search for natural language queries
+- `keyword` - Text-based search using pattern matching
+
+**Filtering Options:**
+- Filter by language(s), chunk type(s), file pattern, directory, or line range
+- Use `--explain` mode for search diagnostics
 
 ### Git Visualization (gpeek)
 

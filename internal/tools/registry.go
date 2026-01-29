@@ -50,10 +50,14 @@ func NewRegistry() *Registry {
 		tools: make(map[string]Tool),
 	}
 
-	// Register default tools
+	// Register default tools - vecgrep semantic search
 	r.Register(&VecgrepSearchTool{})
 	r.Register(&VecgrepSimilarTool{})
 	r.Register(&VecgrepStatusTool{})
+	r.Register(&VecgrepIndexTool{})
+	r.Register(&VecgrepCleanTool{})
+	r.Register(&VecgrepDeleteTool{})
+	r.Register(&VecgrepInitTool{})
 	r.Register(&ReadFileTool{})
 	r.Register(&WriteFileTool{})
 	r.Register(&EditFileTool{})

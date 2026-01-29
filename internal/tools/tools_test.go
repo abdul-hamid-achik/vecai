@@ -16,6 +16,10 @@ func TestRegistry(t *testing.T) {
 		"vecgrep_search",
 		"vecgrep_similar",
 		"vecgrep_status",
+		"vecgrep_index",
+		"vecgrep_clean",
+		"vecgrep_delete",
+		"vecgrep_init",
 		"read_file",
 		"write_file",
 		"edit_file",
@@ -51,10 +55,10 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	// Base count is 23, plus 1 if TAVILY_API_KEY is set (web_search)
-	// Tools: vecgrep(3) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 23
-	minExpected := 23
-	maxExpected := 24
+	// Base count is 27, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Tools: vecgrep(7) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 27
+	minExpected := 27
+	maxExpected := 28
 	if len(tools) < minExpected || len(tools) > maxExpected {
 		t.Errorf("expected %d-%d tools, got %d", minExpected, maxExpected, len(tools))
 	}
@@ -64,10 +68,10 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	// Base count is 23, plus 1 if TAVILY_API_KEY is set (web_search)
-	// Tools: vecgrep(3) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 23
-	minExpected := 23
-	maxExpected := 24
+	// Base count is 27, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Tools: vecgrep(7) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 27
+	minExpected := 27
+	maxExpected := 28
 	if len(defs) < minExpected || len(defs) > maxExpected {
 		t.Errorf("expected %d-%d definitions, got %d", minExpected, maxExpected, len(defs))
 	}
