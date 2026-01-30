@@ -124,6 +124,10 @@ type Model struct {
 	// Input queue for messages submitted during processing
 	inputQueue   []string
 	maxQueueSize int
+
+	// Architect mode state
+	architectMode    bool   // Whether in architect mode
+	architectSubMode string // "plan" or "chat" (toggle with shift+tab)
 }
 
 // NewModel creates a new TUI model
@@ -298,6 +302,36 @@ func (m *Model) DequeueInput() (string, bool) {
 // ClearQueue removes all items from the queue.
 func (m *Model) ClearQueue() {
 	m.inputQueue = m.inputQueue[:0]
+}
+
+// SetArchitectMode enables or disables architect mode
+func (m *Model) SetArchitectMode(enabled bool) {
+	m.architectMode = enabled
+	if enabled {
+		m.architectSubMode = "chat" // Start in chat mode
+	} else {
+		m.architectSubMode = ""
+	}
+}
+
+// IsArchitectMode returns whether architect mode is active
+func (m *Model) IsArchitectMode() bool {
+	return m.architectMode
+}
+
+// GetArchitectSubMode returns the current sub-mode ("plan" or "chat")
+func (m *Model) GetArchitectSubMode() string {
+	return m.architectSubMode
+}
+
+// ToggleArchitectSubMode switches between plan and chat sub-modes
+func (m *Model) ToggleArchitectSubMode() string {
+	if m.architectSubMode == "plan" {
+		m.architectSubMode = "chat"
+	} else {
+		m.architectSubMode = "plan"
+	}
+	return m.architectSubMode
 }
 
 // GetConversationText returns the conversation as plain text for copying

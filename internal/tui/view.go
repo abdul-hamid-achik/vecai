@@ -29,6 +29,7 @@ func init() {
 }
 
 // getNordGlamourStyle returns a glamour style matching the Nord theme
+// Designed for clean, readable output similar to Claude Code
 func getNordGlamourStyle() ansi.StyleConfig {
 	return ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -47,50 +48,57 @@ func getNordGlamourStyle() ansi.StyleConfig {
 			StylePrimitive: ansi.StylePrimitive{
 				Color:  stringPtr("#88c0d0"),
 				Bold:   boolPtr(true),
-				Prefix: "",
+				Prefix: "# ",
 			},
 			Margin: uintPtr(1),
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:  stringPtr("#81a1c1"), // nord9
+				Color:  stringPtr("#88c0d0"),
 				Bold:   boolPtr(true),
-				Prefix: "",
+				Prefix: "## ",
 			},
+			Margin: uintPtr(1),
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:  stringPtr("#81a1c1"),
+				Color:  stringPtr("#81a1c1"), // nord9
 				Bold:   boolPtr(true),
-				Prefix: "",
+				Prefix: "### ",
 			},
+			Margin: uintPtr(1),
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr("#8fbcbb"), // nord7
-				Bold:  boolPtr(true),
+				Color:  stringPtr("#81a1c1"),
+				Bold:   boolPtr(true),
+				Prefix: "#### ",
 			},
 		},
 		H5: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr("#8fbcbb"),
+				Color:  stringPtr("#8fbcbb"), // nord7
+				Bold:   boolPtr(true),
+				Prefix: "##### ",
 			},
 		},
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr("#4c566a"), // nord3
+				Color:  stringPtr("#8fbcbb"),
+				Prefix: "###### ",
 			},
 		},
 		Paragraph: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Color: stringPtr("#d8dee9"),
 			},
+			Margin: uintPtr(1),
 		},
 		Text: ansi.StylePrimitive{
 			Color: stringPtr("#d8dee9"),
 		},
 		Emph: ansi.StylePrimitive{
-			Color:  stringPtr("#d8dee9"),
+			Color:  stringPtr("#eceff4"), // nord6 - make italic text brighter
 			Italic: boolPtr(true),
 		},
 		Strong: ansi.StylePrimitive{
@@ -105,21 +113,32 @@ func getNordGlamourStyle() ansi.StyleConfig {
 				StylePrimitive: ansi.StylePrimitive{
 					Color: stringPtr("#d8dee9"),
 				},
+				Margin: uintPtr(1),
 			},
-			LevelIndent: 2,
+			LevelIndent: 3,
 		},
 		Item: ansi.StylePrimitive{
 			Color:       stringPtr("#d8dee9"),
-			BlockPrefix: "  ", // Indent list items
+			BlockPrefix: "  ",
 		},
 		Enumeration: ansi.StylePrimitive{
-			Color:  stringPtr("#88c0d0"),
-			Format: "%d. ", // Explicit format: number + period + space
+			Color:       stringPtr("#88c0d0"), // nord8 - accent for numbers
+			Format:      "%d. ",
+			BlockPrefix: "  ",
+		},
+		Task: ansi.StyleTask{
+			StylePrimitive: ansi.StylePrimitive{
+				Color: stringPtr("#d8dee9"),
+			},
+			Ticked:   "[✓] ",
+			Unticked: "[ ] ",
 		},
 		Code: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Color:           stringPtr("#a3be8c"), // nord14 - green for inline code
 				BackgroundColor: stringPtr("#3b4252"), // nord1
+				Prefix:          " ",
+				Suffix:          " ",
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
@@ -134,25 +153,55 @@ func getNordGlamourStyle() ansi.StyleConfig {
 					Color: stringPtr("#d8dee9"),
 				},
 				Keyword: ansi.StylePrimitive{
+					Color: stringPtr("#81a1c1"), // nord9
+					Bold:  boolPtr(true),
+				},
+				KeywordReserved: ansi.StylePrimitive{
 					Color: stringPtr("#81a1c1"),
+					Bold:  boolPtr(true),
+				},
+				KeywordType: ansi.StylePrimitive{
+					Color: stringPtr("#8fbcbb"), // nord7
 				},
 				Name: ansi.StylePrimitive{
-					Color: stringPtr("#88c0d0"),
+					Color: stringPtr("#d8dee9"),
 				},
 				NameFunction: ansi.StylePrimitive{
+					Color: stringPtr("#88c0d0"), // nord8
+				},
+				NameClass: ansi.StylePrimitive{
+					Color: stringPtr("#8fbcbb"), // nord7
+				},
+				NameConstant: ansi.StylePrimitive{
+					Color: stringPtr("#ebcb8b"), // nord13
+				},
+				NameBuiltin: ansi.StylePrimitive{
 					Color: stringPtr("#88c0d0"),
 				},
 				LiteralString: ansi.StylePrimitive{
-					Color: stringPtr("#a3be8c"),
+					Color: stringPtr("#a3be8c"), // nord14
 				},
 				LiteralNumber: ansi.StylePrimitive{
-					Color: stringPtr("#b48ead"),
+					Color: stringPtr("#b48ead"), // nord15
 				},
 				Comment: ansi.StylePrimitive{
-					Color: stringPtr("#4c566a"),
+					Color:  stringPtr("#4c566a"), // nord3
+					Italic: boolPtr(true),
+				},
+				CommentPreproc: ansi.StylePrimitive{
+					Color: stringPtr("#5e81ac"), // nord10
 				},
 				Operator: ansi.StylePrimitive{
 					Color: stringPtr("#81a1c1"),
+				},
+				Punctuation: ansi.StylePrimitive{
+					Color: stringPtr("#eceff4"), // nord6
+				},
+				GenericDeleted: ansi.StylePrimitive{
+					Color: stringPtr("#bf616a"), // nord11 - red for deleted
+				},
+				GenericInserted: ansi.StylePrimitive{
+					Color: stringPtr("#a3be8c"), // nord14 - green for inserted
 				},
 			},
 		},
@@ -162,10 +211,11 @@ func getNordGlamourStyle() ansi.StyleConfig {
 		},
 		LinkText: ansi.StylePrimitive{
 			Color: stringPtr("#8fbcbb"),
+			Bold:  boolPtr(true),
 		},
 		HorizontalRule: ansi.StylePrimitive{
 			Color:  stringPtr("#4c566a"),
-			Format: "─────",
+			Format: "────────────────────────────────────────────────────────────────────────────────",
 		},
 		Table: ansi.StyleTable{
 			StyleBlock: ansi.StyleBlock{
@@ -173,26 +223,35 @@ func getNordGlamourStyle() ansi.StyleConfig {
 					Color: stringPtr("#d8dee9"),
 				},
 			},
+			CenterSeparator: stringPtr("┼"),
+			ColumnSeparator: stringPtr("│"),
+			RowSeparator:    stringPtr("─"),
 		},
 		DefinitionList: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Color: stringPtr("#d8dee9"),
 			},
+			Margin: uintPtr(1),
 		},
 		DefinitionTerm: ansi.StylePrimitive{
 			Color: stringPtr("#88c0d0"),
 			Bold:  boolPtr(true),
 		},
 		DefinitionDescription: ansi.StylePrimitive{
-			Color: stringPtr("#d8dee9"),
+			Color:       stringPtr("#d8dee9"),
+			BlockPrefix: "  ",
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color:  stringPtr("#4c566a"),
+				Color:  stringPtr("#81a1c1"), // nord9 - slightly brighter for quotes
 				Italic: boolPtr(true),
 			},
 			Indent:      uintPtr(1),
 			IndentToken: stringPtr("│ "),
+		},
+		ImageText: ansi.StylePrimitive{
+			Color:  stringPtr("#b48ead"), // nord15
+			Format: "[Image: %s]",
 		},
 	}
 }
@@ -366,6 +425,12 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, warningStyle.Render(fmt.Sprintf("+%d queued", queueLen)))
 	}
 
+	// Show architect mode indicator
+	if m.architectMode {
+		modeStr := fmt.Sprintf("Architect[%s]", m.architectSubMode)
+		parts = append(parts, warningStyle.Render(modeStr))
+	}
+
 	// Show contextual hint based on state
 	switch m.state {
 	case StateStreaming, StateRateLimited:
@@ -373,7 +438,11 @@ func (m Model) renderStatusBar() string {
 	case StatePermission:
 		parts = append(parts, statsHintStyle.Render("y/n/a/v"))
 	default:
-		parts = append(parts, statsHintStyle.Render("/help"))
+		if m.architectMode {
+			parts = append(parts, statsHintStyle.Render("Shift+Tab to toggle"))
+		} else {
+			parts = append(parts, statsHintStyle.Render("/help"))
+		}
 	}
 
 	// Join with simple spacing (cleaner look)

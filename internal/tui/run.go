@@ -131,6 +131,11 @@ func (r *TUIRunner) GetAdapter() *TUIAdapter {
 	return r.adapter
 }
 
+// GetModel returns the underlying TUI model for direct state access
+func (r *TUIRunner) GetModel() *Model {
+	return r.model
+}
+
 // SetSubmitCallback sets the callback for when user submits a query
 func (r *TUIRunner) SetSubmitCallback(fn func(string)) {
 	r.model.SetSubmitCallback(fn)

@@ -123,6 +123,26 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+	case tea.KeyShiftTab:
+		// Handle Shift+Tab for architect mode toggle
+		if m.architectMode {
+			newMode := m.ToggleArchitectSubMode()
+			var feedback string
+			if newMode == "plan" {
+				feedback = "Architect: Plan Mode (design & explore)"
+			} else {
+				feedback = "Architect: Chat Mode (ask questions)"
+			}
+			m.AddBlock(ContentBlock{
+				Type:    BlockInfo,
+				Content: feedback,
+			})
+			return m, nil
+		}
+		// Not in architect mode - pass to text input
+		var cmd tea.Cmd
+		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
 	}
 
 	// Handle normal input state
