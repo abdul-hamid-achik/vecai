@@ -123,8 +123,7 @@ func getNordGlamourStyle() ansi.StyleConfig {
 		},
 		Enumeration: ansi.StylePrimitive{
 			Color:       stringPtr("#88c0d0"), // nord8 - accent for numbers
-			Format:      "%d. ",
-			BlockPrefix: "  ",
+			BlockPrefix: ". ",                 // separator between number and text
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{

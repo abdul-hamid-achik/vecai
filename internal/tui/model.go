@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // tuiLog is a prefixed logger for TUI events
@@ -138,6 +139,11 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ti.Focus()
 	ti.CharLimit = 0 // No limit
 	ti.Width = 50
+
+	// Apply Nord theme styling to textinput
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)    // Cyan cursor
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(nord3) // Dim placeholder
+	ti.TextStyle = lipgloss.NewStyle().Foreground(nord4)        // Primary text
 
 	blocks := make([]ContentBlock, 0)
 	return Model{
