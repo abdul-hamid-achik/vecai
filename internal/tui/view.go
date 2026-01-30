@@ -109,10 +109,12 @@ func getNordGlamourStyle() ansi.StyleConfig {
 			LevelIndent: 2,
 		},
 		Item: ansi.StylePrimitive{
-			Color: stringPtr("#d8dee9"),
+			Color:       stringPtr("#d8dee9"),
+			BlockPrefix: "  ", // Indent list items
 		},
 		Enumeration: ansi.StylePrimitive{
-			Color: stringPtr("#88c0d0"),
+			Color:  stringPtr("#88c0d0"),
+			Format: "%d. ", // Explicit format: number + period + space
 		},
 		Code: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -446,9 +448,9 @@ func (m Model) renderContent() string {
 		b.WriteString("\n")
 	}
 
-	// Add streaming content if any
+	// Add streaming content if any (render markdown for consistent formatting)
 	if m.streaming.Len() > 0 {
-		b.WriteString(assistantStyle.Render(m.streaming.String()))
+		b.WriteString(renderMarkdown(m.streaming.String()))
 	}
 
 	return b.String()

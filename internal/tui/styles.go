@@ -99,11 +99,8 @@ var (
 			Bold(true)
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// ASSISTANT MESSAGES
+	// ASSISTANT MESSAGES (rendered via glamour markdown)
 	// ═══════════════════════════════════════════════════════════════════════
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(colorText)
-
 	thinkingStyle = lipgloss.NewStyle().
 			Foreground(colorDim).
 			Italic(true)
