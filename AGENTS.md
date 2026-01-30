@@ -351,9 +351,9 @@ type Client struct {
 
 ```go
 const (
-    TierFast   = "fast"   // Claude Haiku - quick responses
-    TierSmart  = "smart"  // Claude Sonnet - balanced
-    TierGenius = "genius" // Claude Opus - most capable
+    TierFast   = "fast"   // llama3.2:3b - quick responses
+    TierSmart  = "smart"  // qwen3:8b - balanced
+    TierGenius = "genius" // qwen3:14b - most capable
 )
 ```
 
