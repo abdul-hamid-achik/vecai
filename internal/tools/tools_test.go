@@ -9,7 +9,7 @@ import (
 )
 
 func TestRegistry(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	// Check default tools are registered
 	expectedTools := []string{
@@ -52,7 +52,7 @@ func TestRegistry(t *testing.T) {
 }
 
 func TestRegistryList(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	tools := r.List()
 
 	// Base count is 27, plus up to 4 optional tools:
@@ -67,7 +67,7 @@ func TestRegistryList(t *testing.T) {
 }
 
 func TestRegistryGetDefinitions(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	defs := r.GetDefinitions()
 
 	// Base count is 27, plus up to 4 optional tools
@@ -406,7 +406,7 @@ func TestGrepTool(t *testing.T) {
 }
 
 func TestToolInputSchemas(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	for _, tool := range r.List() {
 		schema := tool.InputSchema()

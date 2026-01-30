@@ -17,6 +17,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/memory"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/session"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
@@ -109,28 +110,34 @@ type Config struct {
 
 // Agent is the main AI agent
 type Agent struct {
-	llm           llm.LLMClient
-	tools         *tools.Registry
-	toolSelector  *tools.ToolSelector
-	tierSelector  *TierSelector
-	permissions   *permissions.Policy
-	skills        *skills.Loader
-	output        *ui.OutputHandler
-	input         *ui.InputHandler
-	config        *config.Config
-	contextMgr    *ctxmgr.ContextManager
-	compactor     *ctxmgr.Compactor
-	resultCache   *ctxmgr.ToolResultCache
-	planner       *Planner
-	sessionMgr    *session.Manager
-	analysisMode  bool   // Token-efficient analysis mode
-	autoTier      bool   // Enable automatic tier selection
-	quickMode     bool   // Quick mode (no tools, fast tier)
-	captureMode   bool   // Prompt to save responses to notes
-	currentQuery  string // Current query for smart tool selection
+	llm                 llm.LLMClient
+	tools               *tools.Registry
+	toolSelector        *tools.ToolSelector
+	tierSelector        *TierSelector
+	permissions         *permissions.Policy
+	skills              *skills.Loader
+	output              *ui.OutputHandler
+	input               *ui.InputHandler
+	config              *config.Config
+	contextMgr          *ctxmgr.ContextManager
+	compactor           *ctxmgr.Compactor
+	resultCache         *ctxmgr.ToolResultCache
+	planner             *Planner
+	sessionMgr          *session.Manager
+	memoryLayer         *memory.MemoryLayer // Unified memory access
+	analysisMode        bool                // Token-efficient analysis mode
+	autoTier            bool                // Enable automatic tier selection
+	quickMode           bool                // Quick mode (no tools, fast tier)
+	captureMode         bool                // Prompt to save responses to notes
+	currentQuery        string              // Current query for smart tool selection
+	projectInstructions string              // Loaded from VECAI.md or AGENTS.md
 
 	// Track if we've shown the context warning this session
 	shownContextWarning bool
+
+	// Architect mode state
+	architectMode    bool             // Whether in architect mode
+	previousPermMode permissions.Mode // To restore after exiting architect mode
 }
 
 // New creates a new agent
@@ -171,6 +178,16 @@ func New(cfg Config) *Agent {
 		logger.Warn("Failed to initialize session manager: %v", err)
 	}
 
+	// Initialize memory layer if enabled
+	var memLayer *memory.MemoryLayer
+	if cfg.Config.Memory.Enabled {
+		wd, _ := os.Getwd()
+		memLayer, err = memory.NewMemoryLayer(wd)
+		if err != nil {
+			logger.Warn("Memory layer init failed: %v", err)
+		}
+	}
+
 	// Select system prompt based on mode
 	prompt := systemPrompt
 	if cfg.AnalysisMode {
@@ -184,22 +201,24 @@ func New(cfg Config) *Agent {
 	}
 
 	a := &Agent{
-		llm:          cfg.LLM,
-		tools:        cfg.Tools,
-		toolSelector: tools.NewToolSelector(cfg.Tools),
-		tierSelector: NewTierSelector(),
-		permissions:  cfg.Permissions,
-		skills:       cfg.Skills,
-		output:       cfg.Output,
-		input:        cfg.Input,
-		config:       cfg.Config,
-		contextMgr:   ctxmgr.NewContextManager(prompt, ctxConfig),
-		compactor:    ctxmgr.NewCompactor(cfg.LLM),
-		resultCache:  resultCache,
-		sessionMgr:   sessionMgr,
-		analysisMode: cfg.AnalysisMode,
-		autoTier:     cfg.AutoTier,
-		captureMode:  cfg.CaptureMode,
+		llm:                 cfg.LLM,
+		tools:               cfg.Tools,
+		toolSelector:        tools.NewToolSelector(cfg.Tools),
+		tierSelector:        NewTierSelector(),
+		permissions:         cfg.Permissions,
+		skills:              cfg.Skills,
+		output:              cfg.Output,
+		input:               cfg.Input,
+		config:              cfg.Config,
+		contextMgr:          ctxmgr.NewContextManager(prompt, ctxConfig),
+		compactor:           ctxmgr.NewCompactor(cfg.LLM),
+		resultCache:         resultCache,
+		sessionMgr:          sessionMgr,
+		memoryLayer:         memLayer,
+		analysisMode:        cfg.AnalysisMode,
+		autoTier:            cfg.AutoTier,
+		captureMode:         cfg.CaptureMode,
+		projectInstructions: loadProjectInstructions(),
 	}
 	a.planner = NewPlanner(a)
 
@@ -208,6 +227,23 @@ func New(cfg Config) *Agent {
 		a.contextMgr.SetOnSave(func(msgs []llm.Message) {
 			if err := a.sessionMgr.Save(msgs, a.llm.GetModel()); err != nil {
 				logger.Warn("Failed to save session: %v", err)
+			}
+		})
+	}
+
+	// Wire up learnings callback for auto-learning during compaction
+	if memLayer != nil {
+		a.compactor.SetLearningsCallback(func(learnings []string) {
+			for _, learning := range learnings {
+				// Try to determine if it's a correction or a general note
+				lower := strings.ToLower(learning)
+				if strings.Contains(lower, "prefer") || strings.Contains(lower, "should") ||
+					strings.Contains(lower, "always") || strings.Contains(lower, "never") {
+					// Store as correction pattern
+					if err := memLayer.LearnCorrection("", learning, learning, ""); err != nil {
+						logger.Warn("Failed to store correction: %v", err)
+					}
+				}
 			}
 		})
 	}
@@ -274,6 +310,9 @@ func (a *Agent) runLineBased(query string) error {
 		Role:    "user",
 		Content: query,
 	})
+
+	// Detect and record corrections for learning
+	a.detectAndRecordCorrection(query)
 
 	originalQuery := query // Save for capture
 	err := a.runLoop(ctx)
@@ -516,6 +555,9 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 		Role:    "user",
 		Content: query,
 	})
+
+	// Detect and record corrections for learning
+	a.detectAndRecordCorrection(query)
 
 	return a.runLoopTUI(ctx, adapter)
 }
@@ -882,6 +924,7 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.SendInfo("  /help            Show this help")
 		runner.SendInfo("  /copy            Copy conversation to clipboard")
 		runner.SendInfo("  /mode <tier>     Switch model (fast/smart/genius)")
+		runner.SendInfo("  /architect       Toggle architect mode (Shift+Tab for plan/chat)")
 		runner.SendInfo("  /plan <goal>     Enter plan mode")
 		runner.SendInfo("  /skills          List available skills")
 		runner.SendInfo("  /status          Check vecgrep status")
@@ -895,7 +938,7 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.SendInfo("  /clear           Clear conversation")
 		runner.SendInfo("  /exit            Exit interactive mode")
 		runner.SendInfo("")
-		runner.SendInfo("Debug: Set VECAI_DEBUG=1 environment variable")
+		runner.SendInfo("Debug: Run with --debug or -d flag")
 		return true
 
 	case "/exit", "/quit":
@@ -967,13 +1010,13 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		switch parts[1] {
 		case "fast":
 			a.llm.SetTier(config.TierFast)
-			runner.SendSuccess("Switched to fast mode (Haiku)")
+			runner.SendSuccess("Switched to fast mode (" + a.config.GetModel(config.TierFast) + ")")
 		case "smart":
 			a.llm.SetTier(config.TierSmart)
-			runner.SendSuccess("Switched to smart mode (Sonnet)")
+			runner.SendSuccess("Switched to smart mode (" + a.config.GetModel(config.TierSmart) + ")")
 		case "genius":
 			a.llm.SetTier(config.TierGenius)
-			runner.SendSuccess("Switched to genius mode (Opus)")
+			runner.SendSuccess("Switched to genius mode (" + a.config.GetModel(config.TierGenius) + ")")
 		default:
 			runner.SendError("Unknown mode: " + parts[1])
 		}
@@ -1125,6 +1168,26 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 		runner.SendSuccess(fmt.Sprintf("Started new session (%s)", sess.ID[:8]))
 		return true
 
+	case "/software-architect", "/architect":
+		if a.architectMode {
+			// Exit architect mode
+			a.architectMode = false
+			a.permissions.SetMode(a.previousPermMode) // Restore permissions
+			runner.GetModel().SetArchitectMode(false)
+			runner.SendSuccess("Exited architect mode")
+		} else {
+			// Enter architect mode
+			a.architectMode = true
+			a.previousPermMode = a.permissions.GetMode()
+			a.permissions.SetMode(permissions.ModeAuto) // Bypass permissions
+			runner.GetModel().SetArchitectMode(true)
+			runner.SendSuccess("Entered architect mode (permissions bypassed)")
+			runner.SendInfo("Use Shift+Tab to toggle between Plan and Chat modes")
+			runner.SendInfo("  Plan mode: Design and explore the codebase")
+			runner.SendInfo("  Chat mode: Ask questions and discuss")
+		}
+		return true
+
 	case "/delete":
 		if a.sessionMgr == nil {
 			runner.SendError("Session manager not available")
@@ -1182,8 +1245,19 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 }
 
 // checkVecgrepStatusTUI checks vecgrep status with TUI output
+// Auto-initializes and indexes if not already set up
 func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
 	ctx := context.Background()
+
+	// Notify user if project instructions were loaded
+	if a.projectInstructions != "" {
+		// Determine which file was loaded
+		instructionFile := "AGENTS.md"
+		if _, err := os.Stat("VECAI.md"); err == nil {
+			instructionFile = "VECAI.md"
+		}
+		adapter.Info(fmt.Sprintf("Loaded project instructions from %s", instructionFile))
+	}
 
 	// Check for stale files
 	staleCount := a.getVecgrepStaleCount(ctx)
@@ -1196,14 +1270,70 @@ func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
 	tool, _ := a.tools.Get("vecgrep_status")
 	result, err := tool.Execute(ctx, map[string]any{})
 	if err != nil {
-		adapter.Warning("vecgrep status check failed: " + err.Error())
+		// Status check failed - try auto-init
+		a.autoInitVecgrepTUI(ctx, adapter)
 		return
 	}
 
 	if strings.Contains(result, "not initialized") {
-		adapter.Warning("vecgrep is not initialized. Run 'vecgrep init' for semantic search.")
+		// Auto-initialize and index
+		a.autoInitVecgrepTUI(ctx, adapter)
 	}
 	// Don't show "vecgrep index is ready" - it clutters the viewport with no ongoing value
+}
+
+// autoInitVecgrepTUI automatically initializes and indexes vecgrep with TUI output
+func (a *Agent) autoInitVecgrepTUI(ctx context.Context, adapter *tui.TUIAdapter) {
+	adapter.Info("Vecgrep not initialized. Auto-initializing...")
+
+	// Get working directory
+	wd, err := os.Getwd()
+	if err != nil {
+		adapter.Warning("Failed to get working directory: " + err.Error())
+		return
+	}
+
+	// Run vecgrep_init
+	initTool, ok := a.tools.Get("vecgrep_init")
+	if !ok {
+		adapter.Warning("vecgrep_init tool not available")
+		return
+	}
+
+	result, err := initTool.Execute(ctx, map[string]any{
+		"path": wd,
+	})
+	if err != nil {
+		adapter.Warning("vecgrep init failed: " + err.Error())
+		return
+	}
+	adapter.Info("vecgrep_init: " + truncateResult(result, 80))
+
+	// Run vecgrep_index
+	indexTool, ok := a.tools.Get("vecgrep_index")
+	if !ok {
+		adapter.Warning("vecgrep_index tool not available")
+		return
+	}
+
+	adapter.Info("Indexing codebase (this may take a moment)...")
+	result, err = indexTool.Execute(ctx, map[string]any{})
+	if err != nil {
+		adapter.Warning("vecgrep index failed: " + err.Error())
+		return
+	}
+	adapter.Success("Indexing complete: " + truncateResult(result, 80))
+}
+
+// truncateResult truncates a result string to maxLen characters
+func truncateResult(result string, maxLen int) string {
+	// Remove newlines for cleaner display
+	result = strings.ReplaceAll(result, "\n", " ")
+	result = strings.TrimSpace(result)
+	if len(result) > maxLen {
+		return result[:maxLen-3] + "..."
+	}
+	return result
 }
 
 // getVecgrepStaleCount returns the number of files that need reindexing
@@ -1332,15 +1462,31 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 		switch parts[1] {
 		case "fast":
 			a.llm.SetTier(config.TierFast)
-			a.output.Success("Switched to fast mode (Haiku)")
+			a.output.Success("Switched to fast mode (" + a.config.GetModel(config.TierFast) + ")")
 		case "smart":
 			a.llm.SetTier(config.TierSmart)
-			a.output.Success("Switched to smart mode (Sonnet)")
+			a.output.Success("Switched to smart mode (" + a.config.GetModel(config.TierSmart) + ")")
 		case "genius":
 			a.llm.SetTier(config.TierGenius)
-			a.output.Success("Switched to genius mode (Opus)")
+			a.output.Success("Switched to genius mode (" + a.config.GetModel(config.TierGenius) + ")")
 		default:
 			a.output.ErrorStr("Unknown mode: " + parts[1])
+		}
+		return true
+
+	case "/software-architect", "/architect":
+		if a.architectMode {
+			// Exit architect mode
+			a.architectMode = false
+			a.permissions.SetMode(a.previousPermMode) // Restore permissions
+			a.output.Success("Exited architect mode")
+		} else {
+			// Enter architect mode
+			a.architectMode = true
+			a.previousPermMode = a.permissions.GetMode()
+			a.permissions.SetMode(permissions.ModeAuto) // Bypass permissions
+			a.output.Success("Entered architect mode (permissions bypassed)")
+			a.output.Info("In TUI mode, use Shift+Tab to toggle between Plan and Chat modes")
 		}
 		return true
 
@@ -1759,6 +1905,16 @@ func formatToolDescription(name string, input map[string]any) string {
 // checkVecgrepStatus checks if vecgrep is initialized
 func (a *Agent) checkVecgrepStatus() {
 	ctx := context.Background()
+
+	// Notify user if project instructions were loaded
+	if a.projectInstructions != "" {
+		instructionFile := "AGENTS.md"
+		if _, err := os.Stat("VECAI.md"); err == nil {
+			instructionFile = "VECAI.md"
+		}
+		a.output.Info(fmt.Sprintf("Loaded project instructions from %s", instructionFile))
+	}
+
 	tool, _ := a.tools.Get("vecgrep_status")
 	result, err := tool.Execute(ctx, map[string]any{})
 	if err != nil {
@@ -1777,6 +1933,7 @@ func (a *Agent) showHelp() {
 	a.output.Header("Commands")
 	a.output.TextLn("/help            Show this help")
 	a.output.TextLn("/mode <tier>     Switch model (fast/smart/genius)")
+	a.output.TextLn("/architect       Toggle architect mode (Shift+Tab for plan/chat)")
 	a.output.TextLn("/plan <goal>     Enter plan mode")
 	a.output.TextLn("/skills          List available skills")
 	a.output.TextLn("/status          Check vecgrep status")
@@ -1809,11 +1966,48 @@ func (a *Agent) showSkills() {
 }
 
 // getSystemPrompt returns the appropriate system prompt based on analysis mode
+// Appends project-specific instructions from VECAI.md or AGENTS.md if present
+// Also includes memory context enrichment when available
 func (a *Agent) getSystemPrompt() string {
+	base := systemPrompt
 	if a.analysisMode {
-		return analysisSystemPrompt
+		base = analysisSystemPrompt
 	}
-	return systemPrompt
+
+	var sections []string
+
+	// Existing: project instructions
+	if a.projectInstructions != "" {
+		sections = append(sections, "## Project-Specific Instructions\n\n"+a.projectInstructions)
+	}
+
+	// NEW: memory context enrichment
+	if a.memoryLayer != nil && a.currentQuery != "" {
+		if ctx := a.memoryLayer.GetContextEnrichment(a.currentQuery); ctx != "" {
+			sections = append(sections, ctx)
+		}
+	}
+
+	if len(sections) > 0 {
+		return base + "\n\n" + strings.Join(sections, "\n\n")
+	}
+	return base
+}
+
+// loadProjectInstructions looks for VECAI.md or AGENTS.md in the working directory
+// Returns the file contents if found, empty string otherwise
+func loadProjectInstructions() string {
+	// Try VECAI.md first (project-specific)
+	if content, err := os.ReadFile("VECAI.md"); err == nil {
+		return string(content)
+	}
+
+	// Fall back to AGENTS.md (generic agent instructions)
+	if content, err := os.ReadFile("AGENTS.md"); err == nil {
+		return string(content)
+	}
+
+	return ""
 }
 
 // offerCapture prompts the user to save a response to notes
@@ -1902,6 +2096,29 @@ func (a *Agent) ClearHistory() {
 // GetHistory returns conversation history
 func (a *Agent) GetHistory() []llm.Message {
 	return a.contextMgr.GetMessages()
+}
+
+// Close cleans up agent resources
+func (a *Agent) Close() error {
+	if a.memoryLayer != nil {
+		return a.memoryLayer.Close()
+	}
+	return nil
+}
+
+// detectAndRecordCorrection checks if user message looks like a correction and records it
+func (a *Agent) detectAndRecordCorrection(userMsg string) {
+	if a.memoryLayer == nil {
+		return
+	}
+	patterns := []string{"no,", "wrong", "that's not", "actually", "instead", "should be", "not correct", "incorrect"}
+	lower := strings.ToLower(userMsg)
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			a.memoryLayer.RecordError("agent_correction", userMsg)
+			return
+		}
+	}
 }
 
 // copyToClipboard copies text to system clipboard

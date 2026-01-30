@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewToolSelector(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	if selector == nil {
@@ -14,7 +14,7 @@ func TestNewToolSelector(t *testing.T) {
 }
 
 func TestToolSelector_SelectTools_CoreOnly(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	// Query with no special keywords should only return core tools
@@ -41,7 +41,7 @@ func TestToolSelector_SelectTools_CoreOnly(t *testing.T) {
 }
 
 func TestToolSelector_SelectTools_GitKeywords(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	gitQueries := []string{
@@ -78,7 +78,7 @@ func TestToolSelector_SelectTools_GitKeywords(t *testing.T) {
 }
 
 func TestToolSelector_SelectTools_WriteKeywords(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	writeQueries := []string{
@@ -115,7 +115,7 @@ func TestToolSelector_SelectTools_WriteKeywords(t *testing.T) {
 }
 
 func TestToolSelector_SelectTools_ExecuteKeywords(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	executeQueries := []string{
@@ -143,7 +143,7 @@ func TestToolSelector_SelectTools_ExecuteKeywords(t *testing.T) {
 }
 
 func TestToolSelector_SelectTools_CaseInsensitive(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	// Test case insensitivity
@@ -156,7 +156,7 @@ func TestToolSelector_SelectTools_CaseInsensitive(t *testing.T) {
 }
 
 func TestToolSelector_GetAllToolDefinitions(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	selector := NewToolSelector(registry)
 
 	allTools := selector.GetAllToolDefinitions()
@@ -191,7 +191,7 @@ func TestContainsAny(t *testing.T) {
 }
 
 func TestNewAnalysisRegistry(t *testing.T) {
-	registry := NewAnalysisRegistry()
+	registry := NewAnalysisRegistry(nil)
 
 	tools := registry.List()
 

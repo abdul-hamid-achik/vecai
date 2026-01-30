@@ -41,9 +41,13 @@ type CompactResult struct {
 	MessagesSummarized int
 }
 
+// LearningsCallback is called when learnings are extracted during compaction
+type LearningsCallback func(learnings []string)
+
 // Compactor handles conversation compaction using LLM summarization
 type Compactor struct {
-	llmClient llm.LLMClient
+	llmClient          llm.LLMClient
+	learningsCallback  LearningsCallback
 }
 
 // NewCompactor creates a new compactor
@@ -51,6 +55,11 @@ func NewCompactor(client llm.LLMClient) *Compactor {
 	return &Compactor{
 		llmClient: client,
 	}
+}
+
+// SetLearningsCallback sets a callback to receive extracted learnings during compaction
+func (c *Compactor) SetLearningsCallback(cb LearningsCallback) {
+	c.learningsCallback = cb
 }
 
 // Compact compresses a conversation history into a summary
@@ -111,6 +120,11 @@ func (c *Compactor) Compact(ctx context.Context, req CompactRequest) (*CompactRe
 	summaryTokens := estimateTokens(summary)
 	preservedTokens := calculateTokens(toPreserve)
 
+	// Extract and save learnings if callback is set and we have enough conversation
+	if c.learningsCallback != nil && len(toSummarize) > 2 {
+		go c.extractAndSaveLearnings(ctx, toSummarize)
+	}
+
 	return &CompactResult{
 		Summary:            summary,
 		PreservedMsgs:      toPreserve,
@@ -152,4 +166,77 @@ func calculateTokens(messages []llm.Message) int {
 		total += 10 // Message structure overhead
 	}
 	return total
+}
+
+const learningsPrompt = `Analyze this conversation and extract any learnings that should be remembered for future sessions. Focus on:
+1. User corrections (when user said "no", "wrong", "actually", "instead")
+2. User preferences or coding style requirements
+3. Project-specific patterns or conventions mentioned
+4. Successful solutions to problems
+
+Return ONLY a JSON array of learning strings, or empty array if none found.
+Example: ["User prefers snake_case", "Project uses dependency injection pattern"]
+
+CONVERSATION:
+%s`
+
+// extractAndSaveLearnings extracts learnings from conversation and calls the callback
+func (c *Compactor) extractAndSaveLearnings(ctx context.Context, messages []llm.Message) {
+	if c.learningsCallback == nil {
+		return
+	}
+
+	conversationText := formatConversationForSummary(messages)
+	prompt := fmt.Sprintf(learningsPrompt, conversationText)
+
+	response, err := c.llmClient.Chat(ctx, []llm.Message{
+		{Role: "user", Content: prompt},
+	}, nil, "You extract learnings from conversations. Return only valid JSON.")
+	if err != nil {
+		return // Silently fail - learning extraction is not critical
+	}
+
+	// Parse the response as JSON array
+	learnings := parseLearningsResponse(response.Content)
+	if len(learnings) > 0 {
+		c.learningsCallback(learnings)
+	}
+}
+
+// parseLearningsResponse extracts learning strings from LLM response
+func parseLearningsResponse(content string) []string {
+	content = strings.TrimSpace(content)
+
+	// Try to find JSON array in the response
+	start := strings.Index(content, "[")
+	end := strings.LastIndex(content, "]")
+	if start == -1 || end == -1 || end <= start {
+		return nil
+	}
+
+	jsonStr := content[start : end+1]
+
+	// Simple JSON array parsing (avoid importing encoding/json to keep package lightweight)
+	// Expected format: ["learning1", "learning2"]
+	jsonStr = strings.TrimPrefix(jsonStr, "[")
+	jsonStr = strings.TrimSuffix(jsonStr, "]")
+	jsonStr = strings.TrimSpace(jsonStr)
+
+	if jsonStr == "" {
+		return nil
+	}
+
+	var learnings []string
+	// Split by ", " pattern between strings
+	parts := strings.Split(jsonStr, "\",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		part = strings.Trim(part, "\"")
+		part = strings.TrimSpace(part)
+		if part != "" {
+			learnings = append(learnings, part)
+		}
+	}
+
+	return learnings
 }

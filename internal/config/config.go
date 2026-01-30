@@ -74,12 +74,39 @@ type AnalysisConfig struct {
 	SmartToolSelection bool `yaml:"smart_tool_selection"` // Enable on-demand tool loading
 }
 
+// ToolsConfig holds configuration for all tools
+type ToolsConfig struct {
+	Vecgrep VecgrepToolConfig `yaml:"vecgrep"`
+	Noted   NotedToolConfig   `yaml:"noted"`
+	Gpeek   GpeekToolConfig   `yaml:"gpeek"`
+}
+
+// VecgrepToolConfig holds vecgrep-specific configuration
+type VecgrepToolConfig struct {
+	Enabled      bool   `yaml:"enabled"`       // Enable vecgrep tools (default: true)
+	DefaultMode  string `yaml:"default_mode"`  // Default search mode: "hybrid", "semantic", "keyword"
+	DefaultLimit int    `yaml:"default_limit"` // Default result limit (default: 10)
+}
+
+// NotedToolConfig holds noted-specific configuration
+type NotedToolConfig struct {
+	Enabled          bool `yaml:"enabled"`            // Enable noted tools (default: true if installed)
+	IncludeInContext bool `yaml:"include_in_context"` // Include notes in context enrichment (default: true)
+	MaxContextNotes  int  `yaml:"max_context_notes"`  // Max notes to include in context (default: 5)
+}
+
+// GpeekToolConfig holds gpeek-specific configuration
+type GpeekToolConfig struct {
+	Enabled bool `yaml:"enabled"` // Enable gpeek tools (default: true)
+}
+
 // Config holds the application configuration
 type Config struct {
 	Provider    Provider        `yaml:"provider"`    // LLM provider (only "ollama" supported)
 	Ollama      OllamaConfig    `yaml:"ollama"`      // Ollama configuration
 	Agent       AgentConfig     `yaml:"agent"`       // Multi-agent configuration
 	Memory      MemoryConfig    `yaml:"memory"`      // Memory layer configuration
+	Tools       ToolsConfig     `yaml:"tools"`       // Tool-specific configuration
 	DefaultTier ModelTier       `yaml:"default_tier"`
 	MaxTokens   int             `yaml:"max_tokens"`
 	Temperature float64         `yaml:"temperature"`
@@ -112,6 +139,21 @@ func DefaultConfig() *Config {
 			Enabled:    true,
 			ProjectDir: ".vecai/memory",
 			GlobalDir:  "~/.config/vecai/memory",
+		},
+		Tools: ToolsConfig{
+			Vecgrep: VecgrepToolConfig{
+				Enabled:      true,
+				DefaultMode:  "hybrid",
+				DefaultLimit: 10,
+			},
+			Noted: NotedToolConfig{
+				Enabled:          true,
+				IncludeInContext: true,
+				MaxContextNotes:  5,
+			},
+			Gpeek: GpeekToolConfig{
+				Enabled: true,
+			},
 		},
 		DefaultTier: TierFast,
 		MaxTokens:   8192,

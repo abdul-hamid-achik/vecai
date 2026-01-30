@@ -12,7 +12,9 @@ AI-powered codebase assistant that combines semantic search with local LLM intel
 - **Rich TUI** - Full-featured terminal interface with input queue and visual feedback
 - **Plan Mode** - Break down complex tasks into steps with interactive planning
 - **Session Management** - Save, resume, and manage conversation sessions
+- **Memory Layer** - Unified memory system with session tracking, corrections, and learning
 - **Memory Integration** - Persistent memory via noted for preferences and context
+- **Auto-Learning** - Automatically extracts and remembers patterns from conversations
 - **Permission System** - Control what the AI can read, write, or execute
 - **Skills** - Customizable prompts for common tasks like code review
 - **Analysis Mode** - Token-efficient read-only mode for code reviews
@@ -245,6 +247,25 @@ analysis:
   max_file_tokens: 2000
   aggressive_compaction: true
   smart_tool_selection: true
+
+# Memory layer settings
+memory:
+  enabled: true
+  project_dir: ".vecai/memory"
+  global_dir: "~/.config/vecai/memory"
+
+# Tool configuration
+tools:
+  vecgrep:
+    enabled: true
+    default_mode: "hybrid"    # hybrid, semantic, or keyword
+    default_limit: 10
+  noted:
+    enabled: true
+    include_in_context: true  # Include notes in prompt context
+    max_context_notes: 5
+  gpeek:
+    enabled: true
 ```
 
 ### Environment Variables
@@ -268,6 +289,7 @@ analysis:
 | `--auto` | Auto-approve all tool executions |
 | `--strict` | Prompt for all tool executions (including reads) |
 | `--analyze, -a` | Token-efficient analysis mode (read-only) |
+| `--debug, -d` | Enable debug tracing to /tmp/vecai-debug/ |
 | `-v, --version` | Show version |
 | `-h, --help` | Show help |
 
@@ -528,6 +550,84 @@ vecai -c "explain the visitor pattern"
 
 Without noted, memory tools are not available but vecai still works.
 
+## Memory Layer
+
+vecai includes a unified memory layer that aggregates multiple memory systems to provide context-aware assistance.
+
+### Memory Components
+
+| Component | Scope | Purpose |
+|-----------|-------|---------|
+| **Session Memory** | Current session | Tracks goals, files touched, decisions, and errors |
+| **Project Memory** | Per-project | Stores patterns, conventions, and architecture knowledge |
+| **Correction Memory** | Global | Learns from mistakes and user corrections |
+| **Solution Cache** | Global | Caches successful solutions for reuse |
+| **Noted Integration** | Global | External persistent memory via noted CLI |
+
+### How It Works
+
+1. **Context Enrichment**: When you ask a question, vecai automatically enriches the prompt with relevant memories:
+   - Project patterns and conventions
+   - Current session context (goals, files, decisions)
+   - Relevant corrections from past mistakes
+   - Notes from noted that match your query
+
+2. **Correction Detection**: When you correct vecai (saying "no", "wrong", "actually", etc.), it records the correction for future learning.
+
+3. **Auto-Learning**: During conversation compaction, vecai extracts learnings about:
+   - Your preferences and coding style
+   - Project-specific patterns
+   - Successful solutions to problems
+
+### Configuration
+
+```yaml
+memory:
+  enabled: true                    # Enable/disable memory layer
+  project_dir: ".vecai/memory"     # Per-project memory location
+  global_dir: "~/.config/vecai/memory"  # Global memory location
+```
+
+### Memory Storage
+
+- **Project memory**: Stored in `.vecai/memory/` within your project
+- **Global memory**: Stored in `~/.config/vecai/corrections/` and `~/.config/vecai/solutions/`
+
+## Tool Configuration
+
+You can enable/disable and configure individual tool groups:
+
+```yaml
+tools:
+  vecgrep:
+    enabled: true           # Enable semantic search tools
+    default_mode: "hybrid"  # Default search mode
+    default_limit: 10       # Default result limit
+
+  noted:
+    enabled: true           # Enable noted memory tools
+    include_in_context: true  # Include notes in prompt enrichment
+    max_context_notes: 5    # Max notes to include
+
+  gpeek:
+    enabled: true           # Enable git visualization tools
+```
+
+### Disabling Tool Groups
+
+To disable a tool group entirely:
+
+```yaml
+tools:
+  gpeek:
+    enabled: false  # Disables all gpeek_* tools
+```
+
+This is useful for:
+- Reducing token usage (fewer tool definitions)
+- Restricting capabilities in certain environments
+- Speeding up startup time
+
 ## Examples
 
 ### Understand Code
@@ -648,10 +748,12 @@ Or start a new session:
 
 Enable debug logging to troubleshoot issues:
 ```bash
-VECAI_DEBUG=1 vecai "your query"
+vecai --debug "your query"
+# or
+vecai -d "your query"
 ```
 
-Debug logs are written to `/tmp/vecai-debug/` by default.
+Debug logs are written to `/tmp/vecai-debug/` by default. You can also use the environment variable `VECAI_DEBUG=1`.
 
 ## Development
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/abdul-hamid-achik/vecai/internal/config"
 )
 
 // PermissionLevel defines the level of permission required for a tool
@@ -46,19 +48,24 @@ type Registry struct {
 }
 
 // NewRegistry creates a new tool registry with default tools
-func NewRegistry() *Registry {
+// cfg can be nil to use default settings (all tools enabled)
+func NewRegistry(cfg *config.ToolsConfig) *Registry {
 	r := &Registry{
 		tools: make(map[string]Tool),
 	}
 
-	// Register default tools - vecgrep semantic search
-	r.Register(&VecgrepSearchTool{})
-	r.Register(&VecgrepSimilarTool{})
-	r.Register(&VecgrepStatusTool{})
-	r.Register(&VecgrepIndexTool{})
-	r.Register(&VecgrepCleanTool{})
-	r.Register(&VecgrepDeleteTool{})
-	r.Register(&VecgrepInitTool{})
+	// Register vecgrep tools if enabled (or if no config provided)
+	if cfg == nil || cfg.Vecgrep.Enabled {
+		r.Register(&VecgrepSearchTool{})
+		r.Register(&VecgrepSimilarTool{})
+		r.Register(&VecgrepStatusTool{})
+		r.Register(&VecgrepIndexTool{})
+		r.Register(&VecgrepCleanTool{})
+		r.Register(&VecgrepDeleteTool{})
+		r.Register(&VecgrepInitTool{})
+	}
+
+	// Core file tools (always enabled)
 	r.Register(&ReadFileTool{})
 	r.Register(&WriteFileTool{})
 	r.Register(&EditFileTool{})
@@ -66,34 +73,38 @@ func NewRegistry() *Registry {
 	r.Register(&BashTool{})
 	r.Register(&GrepTool{})
 
-	// Smart tools for Go development
+	// Smart tools for Go development (always enabled)
 	r.Register(&ASTTool{})
 	r.Register(&LSPTool{})
 	r.Register(&LinterTool{})
 	r.Register(&TestRunnerTool{})
 
-	// Register gpeek tools
-	r.Register(&GpeekStatusTool{})
-	r.Register(&GpeekDiffTool{})
-	r.Register(&GpeekLogTool{})
-	r.Register(&GpeekSummaryTool{})
-	r.Register(&GpeekBlameTool{})
-	r.Register(&GpeekBranchesTool{})
-	r.Register(&GpeekStashesTool{})
-	r.Register(&GpeekTagsTool{})
-	r.Register(&GpeekChangesBetweenTool{})
-	r.Register(&GpeekConflictCheckTool{})
+	// Register gpeek tools if enabled (or if no config provided)
+	if cfg == nil || cfg.Gpeek.Enabled {
+		r.Register(&GpeekStatusTool{})
+		r.Register(&GpeekDiffTool{})
+		r.Register(&GpeekLogTool{})
+		r.Register(&GpeekSummaryTool{})
+		r.Register(&GpeekBlameTool{})
+		r.Register(&GpeekBranchesTool{})
+		r.Register(&GpeekStashesTool{})
+		r.Register(&GpeekTagsTool{})
+		r.Register(&GpeekChangesBetweenTool{})
+		r.Register(&GpeekConflictCheckTool{})
+	}
 
 	// Register web search tool (conditionally if API key available)
 	if os.Getenv("TAVILY_API_KEY") != "" {
 		r.Register(NewWebSearchTool())
 	}
 
-	// Register noted memory tools if installed
-	if _, err := exec.LookPath("noted"); err == nil {
-		r.Register(&NotedRememberTool{})
-		r.Register(&NotedRecallTool{})
-		r.Register(&NotedForgetTool{})
+	// Register noted memory tools if enabled and installed
+	if cfg == nil || cfg.Noted.Enabled {
+		if _, err := exec.LookPath("noted"); err == nil {
+			r.Register(&NotedRememberTool{})
+			r.Register(&NotedRecallTool{})
+			r.Register(&NotedForgetTool{})
+		}
 	}
 
 	return r
@@ -101,15 +112,20 @@ func NewRegistry() *Registry {
 
 // NewAnalysisRegistry creates a tool registry with only read-only analysis tools
 // This is used in analysis mode to reduce token consumption and prevent modifications
-func NewAnalysisRegistry() *Registry {
+// cfg can be nil to use default settings (all tools enabled)
+func NewAnalysisRegistry(cfg *config.ToolsConfig) *Registry {
 	r := &Registry{
 		tools: make(map[string]Tool),
 	}
 
-	// Read-only analysis tools only
-	r.Register(&VecgrepSearchTool{})
-	r.Register(&VecgrepSimilarTool{})
-	r.Register(&VecgrepStatusTool{})
+	// Read-only vecgrep tools if enabled
+	if cfg == nil || cfg.Vecgrep.Enabled {
+		r.Register(&VecgrepSearchTool{})
+		r.Register(&VecgrepSimilarTool{})
+		r.Register(&VecgrepStatusTool{})
+	}
+
+	// Core read-only tools (always enabled)
 	r.Register(&ReadFileTool{})
 	r.Register(&ListFilesTool{})
 	r.Register(&GrepTool{})
@@ -118,17 +134,19 @@ func NewAnalysisRegistry() *Registry {
 	r.Register(&ASTTool{})
 	r.Register(&LSPTool{})
 
-	// Git visualization tools (all read-only)
-	r.Register(&GpeekStatusTool{})
-	r.Register(&GpeekDiffTool{})
-	r.Register(&GpeekLogTool{})
-	r.Register(&GpeekSummaryTool{})
-	r.Register(&GpeekBlameTool{})
-	r.Register(&GpeekBranchesTool{})
-	r.Register(&GpeekStashesTool{})
-	r.Register(&GpeekTagsTool{})
-	r.Register(&GpeekChangesBetweenTool{})
-	r.Register(&GpeekConflictCheckTool{})
+	// Git visualization tools (all read-only) if enabled
+	if cfg == nil || cfg.Gpeek.Enabled {
+		r.Register(&GpeekStatusTool{})
+		r.Register(&GpeekDiffTool{})
+		r.Register(&GpeekLogTool{})
+		r.Register(&GpeekSummaryTool{})
+		r.Register(&GpeekBlameTool{})
+		r.Register(&GpeekBranchesTool{})
+		r.Register(&GpeekStashesTool{})
+		r.Register(&GpeekTagsTool{})
+		r.Register(&GpeekChangesBetweenTool{})
+		r.Register(&GpeekConflictCheckTool{})
+	}
 
 	// Note: Excludes write_file, edit_file, bash (write/execute tools)
 	// Web search is excluded to reduce token usage

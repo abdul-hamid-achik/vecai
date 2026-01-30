@@ -22,8 +22,17 @@ func main() {
 	// Ensure log file is closed on exit
 	defer logger.CloseLogFile()
 
-	// Initialize debug tracer from env var
-	if os.Getenv("VECAI_DEBUG") == "1" {
+	// Check for --debug flag early (before other parsing)
+	debugMode := os.Getenv("VECAI_DEBUG") == "1"
+	for _, arg := range os.Args[1:] {
+		if arg == "--debug" || arg == "-d" {
+			debugMode = true
+			break
+		}
+	}
+
+	// Initialize debug tracer if enabled via flag or env var
+	if debugMode {
 		if err := debug.Init(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to init debug tracer: %v\n", err)
 		}
@@ -53,6 +62,14 @@ func run() error {
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
 		printHelp()
 		return nil
+	}
+
+	// Parse debug flag (already handled in main, just remove from args)
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-d" || args[i] == "--debug" {
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
 	}
 
 	// Parse quick mode flag (-q/--quick)
@@ -142,10 +159,10 @@ func run() error {
 	// Select registry based on mode
 	var registry *tools.Registry
 	if analysisMode {
-		registry = tools.NewAnalysisRegistry()
+		registry = tools.NewAnalysisRegistry(&cfg.Tools)
 		logger.Debug("Using analysis registry (read-only tools)")
 	} else {
-		registry = tools.NewRegistry()
+		registry = tools.NewRegistry(&cfg.Tools)
 	}
 	policy := permissions.NewPolicy(permMode, input, output)
 	skillLoader := skills.NewLoader()
@@ -228,6 +245,7 @@ Flags:
   --auto                  Auto-approve all tool executions
   --strict                Prompt for all tool executions (including reads)
   --analyze, -a           Token-efficient analysis mode (read-only, minimal prompt)
+  --debug, -d             Enable debug tracing to /tmp/vecai-debug/
   -v, --version           Show version
   -h, --help              Show help
 
@@ -252,7 +270,7 @@ Model Tiers (default models):
 
 Environment:
   OLLAMA_HOST             Ollama server URL (overrides config)
-  VECAI_DEBUG=1           Enable debug tracing to /tmp/vecai-debug/
+  VECAI_DEBUG=1           Enable debug tracing (prefer --debug flag)
   VECAI_DEBUG_DIR         Override debug log directory
   VECAI_DEBUG_LLM=1       Enable full LLM payload logging
 

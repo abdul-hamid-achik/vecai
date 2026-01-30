@@ -263,7 +263,7 @@ func TestWebSearchTool_Execute_MaxResultsBounds(t *testing.T) {
 func TestRegistryWebSearchConditional(t *testing.T) {
 	// Test without API key - web_search should NOT be registered
 	_ = os.Unsetenv("TAVILY_API_KEY")
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	if _, ok := r.Get("web_search"); ok {
 		t.Error("web_search should not be registered without TAVILY_API_KEY")
 	}
@@ -271,7 +271,7 @@ func TestRegistryWebSearchConditional(t *testing.T) {
 	// Test with API key - web_search should be registered
 	_ = os.Setenv("TAVILY_API_KEY", "test-key")
 	defer func() { _ = os.Unsetenv("TAVILY_API_KEY") }()
-	r = NewRegistry()
+	r = NewRegistry(nil)
 	if _, ok := r.Get("web_search"); !ok {
 		t.Error("web_search should be registered when TAVILY_API_KEY is set")
 	}
