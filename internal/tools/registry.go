@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync"
 )
 
@@ -86,6 +87,13 @@ func NewRegistry() *Registry {
 	// Register web search tool (conditionally if API key available)
 	if os.Getenv("TAVILY_API_KEY") != "" {
 		r.Register(NewWebSearchTool())
+	}
+
+	// Register noted memory tools if installed
+	if _, err := exec.LookPath("noted"); err == nil {
+		r.Register(&NotedRememberTool{})
+		r.Register(&NotedRecallTool{})
+		r.Register(&NotedForgetTool{})
 	}
 
 	return r

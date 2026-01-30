@@ -55,6 +55,26 @@ func run() error {
 		return nil
 	}
 
+	// Parse quick mode flag (-q/--quick)
+	quickMode := false
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-q" || args[i] == "--quick" {
+			quickMode = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
+	}
+
+	// Parse capture mode flag (-c/--capture)
+	captureMode := false
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" || args[i] == "--capture" {
+			captureMode = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
+	}
+
 	// Parse CLI flags
 	var loadOpts config.LoadOptions
 	for i := 0; i < len(args); i++ {
@@ -140,7 +160,21 @@ func run() error {
 		Input:        input,
 		Config:       cfg,
 		AnalysisMode: analysisMode,
+		AutoTier:     true,        // Enable smart tier selection by default
+		CaptureMode:  captureMode, // Prompt to save responses to notes
 	})
+
+	// Handle models subcommand
+	if len(args) > 0 && args[0] == "models" {
+		return handleModelsCommand(cfg, args[1:])
+	}
+
+	// Quick mode: fast response, no tools
+	if quickMode && len(args) > 0 {
+		query := joinArgs(args)
+		logger.Debug("Quick mode with query: %s", query)
+		return a.RunQuick(query)
+	}
 
 	// Check for plan mode
 	if len(args) > 0 && args[0] == "plan" {
@@ -182,11 +216,14 @@ Usage:
   vecai [query]           Run a one-shot query
   vecai                   Start interactive mode
   vecai plan <goal>       Create and execute a plan
+  vecai models <cmd>      Manage Ollama models (list/test/pull)
   vecai version           Show version
   vecai help              Show this help
 
 Flags:
-  --model <name>          Override model (e.g., "qwen3:8b", "cogito:14b")
+  -q, --quick             Quick mode: fast response, no tools (for simple questions)
+  -c, --capture           Capture mode: prompt to save responses to notes
+  --model <name>          Override model (e.g., "qwen3:8b", "qwen3:14b")
   --ollama-url <url>      Override Ollama URL (default: http://localhost:11434)
   --auto                  Auto-approve all tool executions
   --strict                Prompt for all tool executions (including reads)
@@ -209,9 +246,9 @@ Interactive Commands:
   /exit                   Exit interactive mode
 
 Model Tiers (default models):
-  fast     qwen3:8b          Fast responses, good for simple tasks
-  smart    qwen2.5-coder:7b  Balanced, code-focused
-  genius   cogito:14b        Most capable, complex reasoning
+  fast     llama3.2:3b       Fast responses, good for simple tasks
+  smart    qwen3:8b          Balanced, code-focused
+  genius   qwen3:14b         Most capable, complex reasoning
 
 Environment:
   OLLAMA_HOST             Ollama server URL (overrides config)

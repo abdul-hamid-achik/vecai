@@ -21,9 +21,9 @@ const (
 type ModelTier string
 
 const (
-	TierFast   ModelTier = "fast"   // Fast model (qwen3:8b)
-	TierSmart  ModelTier = "smart"  // Smart model (qwen2.5-coder:7b)
-	TierGenius ModelTier = "genius" // Genius model (cogito:14b)
+	TierFast   ModelTier = "fast"   // Fast model (llama3.2:3b)
+	TierSmart  ModelTier = "smart"  // Smart model (qwen3:8b)
+	TierGenius ModelTier = "genius" // Genius model (qwen3:14b)
 )
 
 // OllamaConfig holds Ollama-specific configuration
@@ -99,10 +99,10 @@ func DefaultConfig() *Config {
 		Provider: ProviderOllama,
 		Ollama: OllamaConfig{
 			BaseURL:     "http://localhost:11434",
-			ModelFast:   "qwen3:8b",
-			ModelSmart:  "qwen2.5-coder:7b",
-			ModelGenius: "cogito:14b",
-			KeepAlive:   "5m",
+			ModelFast:   "llama3.2:3b",
+			ModelSmart:  "qwen3:8b",
+			ModelGenius: "qwen3:14b",
+			KeepAlive:   "30m",
 		},
 		Agent: AgentConfig{
 			MaxRetries:          3,
@@ -126,11 +126,11 @@ func DefaultConfig() *Config {
 			EnableRateLimiting: false,
 		},
 		Context: ContextConfig{
-			AutoCompactThreshold: 0.95,
-			WarnThreshold:        0.80,
-			PreserveLast:         4,
+			AutoCompactThreshold: 0.70,
+			WarnThreshold:        0.50,
+			PreserveLast:         2,
 			EnableAutoCompact:    true,
-			ContextWindow:        32768, // Safe default for qwen3:8b and qwen2.5-coder:7b (32K)
+			ContextWindow:        8192, // Optimized for speed with llama3.2:3b
 		},
 		Analysis: AnalysisConfig{
 			Enabled:            false,

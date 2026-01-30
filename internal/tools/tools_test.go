@@ -55,10 +55,12 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 	tools := r.List()
 
-	// Base count is 27, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Base count is 27, plus up to 4 optional tools:
+	// - web_search (if TAVILY_API_KEY is set)
+	// - noted_remember, noted_recall, noted_forget (if noted CLI is installed)
 	// Tools: vecgrep(7) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 27
 	minExpected := 27
-	maxExpected := 28
+	maxExpected := 31 // 27 + 1 (web) + 3 (noted)
 	if len(tools) < minExpected || len(tools) > maxExpected {
 		t.Errorf("expected %d-%d tools, got %d", minExpected, maxExpected, len(tools))
 	}
@@ -68,10 +70,10 @@ func TestRegistryGetDefinitions(t *testing.T) {
 	r := NewRegistry()
 	defs := r.GetDefinitions()
 
-	// Base count is 27, plus 1 if TAVILY_API_KEY is set (web_search)
+	// Base count is 27, plus up to 4 optional tools
 	// Tools: vecgrep(7) + file(4) + bash(1) + grep(1) + gpeek(10) + smart(4) = 27
 	minExpected := 27
-	maxExpected := 28
+	maxExpected := 31 // 27 + 1 (web) + 3 (noted)
 	if len(defs) < minExpected || len(defs) > maxExpected {
 		t.Errorf("expected %d-%d definitions, got %d", minExpected, maxExpected, len(defs))
 	}

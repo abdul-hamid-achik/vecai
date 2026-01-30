@@ -103,6 +103,8 @@ type Config struct {
 	Input        *ui.InputHandler
 	Config       *config.Config
 	AnalysisMode bool // Enable token-efficient analysis mode
+	AutoTier     bool // Enable automatic tier selection based on query
+	CaptureMode  bool // Prompt to save responses to notes
 }
 
 // Agent is the main AI agent
@@ -110,6 +112,7 @@ type Agent struct {
 	llm           llm.LLMClient
 	tools         *tools.Registry
 	toolSelector  *tools.ToolSelector
+	tierSelector  *TierSelector
 	permissions   *permissions.Policy
 	skills        *skills.Loader
 	output        *ui.OutputHandler
@@ -121,6 +124,9 @@ type Agent struct {
 	planner       *Planner
 	sessionMgr    *session.Manager
 	analysisMode  bool   // Token-efficient analysis mode
+	autoTier      bool   // Enable automatic tier selection
+	quickMode     bool   // Quick mode (no tools, fast tier)
+	captureMode   bool   // Prompt to save responses to notes
 	currentQuery  string // Current query for smart tool selection
 
 	// Track if we've shown the context warning this session
@@ -181,6 +187,7 @@ func New(cfg Config) *Agent {
 		llm:          cfg.LLM,
 		tools:        cfg.Tools,
 		toolSelector: tools.NewToolSelector(cfg.Tools),
+		tierSelector: NewTierSelector(),
 		permissions:  cfg.Permissions,
 		skills:       cfg.Skills,
 		output:       cfg.Output,
@@ -191,6 +198,8 @@ func New(cfg Config) *Agent {
 		resultCache:  resultCache,
 		sessionMgr:   sessionMgr,
 		analysisMode: cfg.AnalysisMode,
+		autoTier:     cfg.AutoTier,
+		captureMode:  cfg.CaptureMode,
 	}
 	a.planner = NewPlanner(a)
 
@@ -204,6 +213,27 @@ func New(cfg Config) *Agent {
 	}
 
 	return a
+}
+
+// RunQuick executes a query in quick mode: fast tier, no tools, minimal prompt
+func (a *Agent) RunQuick(query string) error {
+	ctx := context.Background()
+
+	// Force fast tier for speed
+	a.llm.SetTier(config.TierFast)
+
+	// Minimal system prompt for quick responses
+	quickPrompt := "You are a concise assistant. Answer briefly and directly."
+
+	// Single message, no history, no tools
+	messages := []llm.Message{{Role: "user", Content: query}}
+	resp, err := a.llm.Chat(ctx, messages, nil, quickPrompt)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(resp.Content)
+	return nil
 }
 
 // Run executes a single query (uses TUI if available, otherwise line-based)
@@ -226,6 +256,13 @@ func (a *Agent) runLineBased(query string) error {
 	// Track current query for smart tool selection
 	a.currentQuery = query
 
+	// Apply auto-tier selection if enabled
+	if a.autoTier && !a.quickMode {
+		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		a.llm.SetTier(selectedTier)
+		logger.Debug("Auto-tier selected: %s (reason: %s)", selectedTier, a.tierSelector.GetTierReason(query))
+	}
+
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
 		a.output.Info(fmt.Sprintf("Using skill: %s", skill.Name))
@@ -238,7 +275,26 @@ func (a *Agent) runLineBased(query string) error {
 		Content: query,
 	})
 
-	return a.runLoop(ctx)
+	originalQuery := query // Save for capture
+	err := a.runLoop(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Offer to capture if enabled and we have a response
+	if a.captureMode {
+		messages := a.contextMgr.GetMessages()
+		if len(messages) > 0 {
+			lastMsg := messages[len(messages)-1]
+			if lastMsg.Role == "assistant" && lastMsg.Content != "" {
+				if captureErr := a.offerCapture(ctx, originalQuery, lastMsg.Content); captureErr != nil {
+					logger.Warn("Capture failed: %v", captureErr)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // RunTUI runs the agent with the TUI interface
@@ -441,6 +497,13 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 
 	// Track current query for smart tool selection
 	a.currentQuery = query
+
+	// Apply auto-tier selection if enabled
+	if a.autoTier && !a.quickMode {
+		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		a.llm.SetTier(selectedTier)
+		logger.Debug("Auto-tier selected: %s (reason: %s)", selectedTier, a.tierSelector.GetTierReason(query))
+	}
 
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
@@ -1751,6 +1814,83 @@ func (a *Agent) getSystemPrompt() string {
 		return analysisSystemPrompt
 	}
 	return systemPrompt
+}
+
+// offerCapture prompts the user to save a response to notes
+func (a *Agent) offerCapture(ctx context.Context, query, response string) error {
+	// Skip if noted is not available
+	tool, ok := a.tools.Get("noted_remember")
+	if !ok {
+		return nil
+	}
+
+	// Prompt user
+	a.output.TextLn("")
+	input, err := a.input.ReadInput("Save to notes? [y/N/e(dit)] ")
+	if err != nil {
+		return err
+	}
+
+	input = strings.ToLower(strings.TrimSpace(input))
+	if input == "" || input == "n" || input == "no" {
+		return nil
+	}
+
+	// Auto-generate tags from query
+	tags := generateTags(query)
+
+	content := response
+	if input == "e" || input == "edit" {
+		// Let user edit the content
+		content, err = a.input.ReadMultiLine("Enter content (empty line to finish): ")
+		if err != nil {
+			return err
+		}
+	}
+
+	// Save to notes
+	_, err = tool.Execute(ctx, map[string]any{
+		"content":    content,
+		"tags":       tags,
+		"importance": 0.6, // Slightly above default for user-saved content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save note: %w", err)
+	}
+
+	a.output.Success("Saved to notes")
+	return nil
+}
+
+// generateTags creates tags from a query string
+func generateTags(query string) []any {
+	queryLower := strings.ToLower(query)
+
+	var tags []any
+
+	// Category tags based on keywords
+	if strings.Contains(queryLower, "config") || strings.Contains(queryLower, "setting") {
+		tags = append(tags, "config")
+	}
+	if strings.Contains(queryLower, "code") || strings.Contains(queryLower, "function") || strings.Contains(queryLower, "implement") {
+		tags = append(tags, "code")
+	}
+	if strings.Contains(queryLower, "bug") || strings.Contains(queryLower, "fix") || strings.Contains(queryLower, "error") {
+		tags = append(tags, "debug")
+	}
+	if strings.Contains(queryLower, "prefer") || strings.Contains(queryLower, "like") || strings.Contains(queryLower, "want") {
+		tags = append(tags, "preference")
+	}
+	if strings.Contains(queryLower, "remember") || strings.Contains(queryLower, "note") {
+		tags = append(tags, "note")
+	}
+
+	// Always add a general tag if no specific ones matched
+	if len(tags) == 0 {
+		tags = append(tags, "general")
+	}
+
+	return tags
 }
 
 // ClearHistory clears conversation history

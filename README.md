@@ -7,13 +7,17 @@ AI-powered codebase assistant that combines semantic search with local LLM intel
 - **Semantic Code Search** - Find code by meaning, not just keywords (via vecgrep)
 - **Local LLM** - Runs entirely on Ollama, no cloud API required
 - **Multiple Model Tiers** - Choose between fast, smart, or genius modes
+- **Smart Tier Selection** - Automatically selects optimal model based on query complexity
+- **Quick Mode** - Instant responses without tools for simple questions
 - **Rich TUI** - Full-featured terminal interface with input queue and visual feedback
 - **Plan Mode** - Break down complex tasks into steps with interactive planning
 - **Session Management** - Save, resume, and manage conversation sessions
+- **Memory Integration** - Persistent memory via noted for preferences and context
 - **Permission System** - Control what the AI can read, write, or execute
 - **Skills** - Customizable prompts for common tasks like code review
 - **Analysis Mode** - Token-efficient read-only mode for code reviews
 - **Context Management** - Auto-compaction to handle long conversations
+- **Capture Mode** - Save responses to notes for future reference
 
 ## Quick Start
 
@@ -21,11 +25,14 @@ AI-powered codebase assistant that combines semantic search with local LLM intel
 # Start Ollama
 ollama serve
 
-# Pull a model
-ollama pull qwen3:8b
+# Pull all required models
+vecai models pull
 
 # Run a query
 vecai "explain how authentication works in this codebase"
+
+# Quick mode for instant answers
+vecai -q "what is 2+2"
 
 # Start interactive mode
 vecai
@@ -66,6 +73,7 @@ task build
 - [Ollama](https://ollama.ai) - Local LLM server (required)
 - [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) - Semantic code search (optional)
 - [gpeek](https://github.com/abdul-hamid-achik/gpeek) - Git visualization (optional)
+- [noted](https://github.com/abdul-hamid-achik/noted) - Persistent memory (optional)
 
 ### Verify Installation
 
@@ -85,6 +93,31 @@ vecai "find all API endpoints"
 vecai "explain the error handling in this project"
 ```
 
+### Quick Mode
+
+Get instant responses without tools for simple questions:
+
+```bash
+vecai -q "what is a goroutine?"
+vecai --quick "explain REST vs GraphQL"
+```
+
+Quick mode:
+- Uses the fast model tier (llama3.2:3b)
+- No tools, no history, minimal prompt
+- Ideal for quick factual questions
+
+### Capture Mode
+
+Save AI responses to persistent memory:
+
+```bash
+vecai -c "what's the best way to handle errors in Go?"
+# After response: "Save to notes? [y/N/e(dit)]"
+```
+
+Capture mode prompts to save responses via noted for future reference.
+
 ### Interactive Mode
 
 Start a conversation with the full TUI:
@@ -98,9 +131,9 @@ Interactive commands:
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/mode fast` | Switch to fast model (qwen3:8b) |
-| `/mode smart` | Switch to smart model (qwen2.5-coder:7b) |
-| `/mode genius` | Switch to genius model (cogito:14b) |
+| `/mode fast` | Switch to fast model (llama3.2:3b) |
+| `/mode smart` | Switch to smart model (qwen3:8b) |
+| `/mode genius` | Switch to genius model (qwen3:14b) |
 | `/plan <goal>` | Enter plan mode |
 | `/skills` | List available skills |
 | `/status` | Check vecgrep index status |
@@ -178,10 +211,10 @@ provider: ollama
 # Ollama settings
 ollama:
   base_url: "http://localhost:11434"
-  model_fast: "qwen3:8b"
-  model_smart: "qwen2.5-coder:7b"
-  model_genius: "cogito:14b"
-  keep_alive: "5m"
+  model_fast: "llama3.2:3b"
+  model_smart: "qwen3:8b"
+  model_genius: "qwen3:14b"
+  keep_alive: "30m"
 
 # Default model tier: fast, smart, or genius
 default_tier: fast
@@ -200,11 +233,11 @@ vecgrep_path: vecgrep
 
 # Context management
 context:
-  auto_compact_threshold: 0.95    # Auto-compact at 95% context usage
-  warn_threshold: 0.80            # Warn at 80% context usage
-  preserve_last: 4                # Keep last 4 messages when compacting
+  auto_compact_threshold: 0.70    # Auto-compact at 70% context usage
+  warn_threshold: 0.50            # Warn at 50% context usage
+  preserve_last: 2                # Keep last 2 messages when compacting
   enable_auto_compact: true
-  context_window: 32768           # Token limit for model
+  context_window: 8192            # Token limit for model (optimized for speed)
 
 # Token-efficient analysis mode
 analysis:
@@ -228,13 +261,32 @@ analysis:
 
 | Flag | Description |
 |------|-------------|
-| `--model <name>` | Override model (e.g., "qwen3:8b", "cogito:14b") |
+| `-q, --quick` | Quick mode: fast response, no tools |
+| `-c, --capture` | Capture mode: prompt to save responses to notes |
+| `--model <name>` | Override model (e.g., "qwen3:8b", "qwen3:14b") |
 | `--ollama-url <url>` | Override Ollama URL (default: http://localhost:11434) |
 | `--auto` | Auto-approve all tool executions |
 | `--strict` | Prompt for all tool executions (including reads) |
 | `--analyze, -a` | Token-efficient analysis mode (read-only) |
 | `-v, --version` | Show version |
 | `-h, --help` | Show help |
+
+## Subcommands
+
+### Models Management
+
+Manage Ollama models used by vecai:
+
+```bash
+# Show configured model tiers and local availability
+vecai models list
+
+# Benchmark each model tier
+vecai models test
+
+# Pull all configured models from Ollama
+vecai models pull
+```
 
 ## Tools
 
@@ -302,6 +354,16 @@ vecai can use these tools to interact with your codebase:
 |------|------------|-------------|
 | `web_search` | Read | Search the web (requires Tavily API key) |
 
+### Memory (noted)
+
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `noted_remember` | Write | Store memories with tags and importance |
+| `noted_recall` | Read | Search memories semantically |
+| `noted_forget` | Write | Delete memories by ID, tags, or age |
+
+Memory tools are available when [noted](https://github.com/abdul-hamid-achik/noted) is installed.
+
 ## Skills
 
 Skills are reusable prompts for common tasks. They trigger automatically based on keywords.
@@ -346,11 +408,36 @@ Skills are loaded from:
 
 | Tier | Default Model | Best For |
 |------|---------------|----------|
-| `fast` | qwen3:8b | Quick questions, simple tasks |
-| `smart` | qwen2.5-coder:7b | Most tasks, good balance |
-| `genius` | cogito:14b | Complex reasoning, architecture |
+| `fast` | llama3.2:3b | Quick questions, simple lookups |
+| `smart` | qwen3:8b | Most tasks, good balance |
+| `genius` | qwen3:14b | Complex reasoning, architecture |
 
-Switch tiers in interactive mode:
+### Smart Tier Selection
+
+vecai automatically selects the optimal model based on query complexity:
+
+- **Simple queries** ("where is...", "find...", "list...") → fast tier
+- **Complex queries** ("analyze...", "review...", "refactor...") → genius tier
+- **Default** → smart tier
+
+This happens automatically. Override with `--model` if needed.
+
+### Managing Models
+
+```bash
+# See current configuration and availability
+vecai models list
+
+# Pull all required models
+vecai models pull
+
+# Test response times for each tier
+vecai models test
+```
+
+### Switch Tiers Manually
+
+In interactive mode:
 ```
 /mode fast
 /mode smart
@@ -359,7 +446,7 @@ Switch tiers in interactive mode:
 
 Or override via CLI:
 ```bash
-vecai --model cogito:14b "explain the architecture"
+vecai --model qwen3:14b "explain the architecture"
 ```
 
 ## Semantic Search Setup
@@ -409,6 +496,37 @@ vecai "will merging feature-branch cause conflicts?"
 ```
 
 Without gpeek, vecai falls back to basic `git` commands via bash.
+
+## Memory Setup
+
+For persistent memory capabilities, install noted:
+
+```bash
+# Install noted via Homebrew
+brew tap abdul-hamid-achik/tap
+brew install noted
+
+# Or via Go
+go install github.com/abdul-hamid-achik/noted@latest
+
+# Verify
+noted --version
+```
+
+With noted, you can:
+```bash
+# Ask vecai to remember things
+vecai "remember that I prefer tabs over spaces"
+
+# Recall memories
+vecai "what are my code style preferences?"
+
+# Use capture mode to save responses
+vecai -c "explain the visitor pattern"
+# Then choose to save the response
+```
+
+Without noted, memory tools are not available but vecai still works.
 
 ## Examples
 
@@ -479,10 +597,10 @@ Make sure Ollama is running:
 ollama serve
 ```
 
-And verify you have a model pulled:
+And verify you have models pulled:
 ```bash
 ollama list
-ollama pull qwen3:8b
+vecai models pull  # Pull all required models
 ```
 
 ### "vecgrep is not initialized"
@@ -499,14 +617,19 @@ Use `--auto` for trusted operations or respond to permission prompts.
 
 ### Slow Responses
 
-Switch to a faster model:
+Use quick mode for simple questions:
+```bash
+vecai -q "quick question"
+```
+
+Or switch to a faster model:
 ```
 /mode fast
 ```
 
 Or use a smaller Ollama model:
 ```bash
-vecai --model qwen3:4b "quick question"
+vecai --model llama3.2:1b "quick question"
 ```
 
 ### High Memory Usage
