@@ -7,7 +7,6 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
@@ -49,7 +48,7 @@ func NewExecutorAgent(client llm.LLMClient, cfg *config.Config, registry *tools.
 
 // ExecuteStep executes a single plan step
 func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previousContext string) (*ExecutionResult, error) {
-	logger.Debug("ExecutorAgent: executing step %s: %s", step.ID, step.Description)
+	logDebug("ExecutorAgent: executing step %s: %s", step.ID, step.Description)
 
 	// Use smart model for code execution
 	originalModel := e.client.GetModel()
@@ -99,7 +98,7 @@ func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previou
 			result.ToolCalls = append(result.ToolCalls, toolResult)
 
 			if toolResult.Error != nil {
-				logger.Warn("ExecutorAgent: tool %s failed: %v", tc.Name, toolResult.Error)
+				logWarn("ExecutorAgent: tool %s failed: %v", tc.Name, toolResult.Error)
 			}
 
 			// Add tool result to conversation
@@ -114,13 +113,13 @@ func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previou
 		}
 	}
 
-	logger.Debug("ExecutorAgent: step %s completed with %d tool calls", step.ID, len(result.ToolCalls))
+	logDebug("ExecutorAgent: step %s completed with %d tool calls", step.ID, len(result.ToolCalls))
 	return result, nil
 }
 
 // ExecuteDirectTask executes a task without a structured plan
 func (e *ExecutorAgent) ExecuteDirectTask(ctx context.Context, task string, intent Intent) (*ExecutionResult, error) {
-	logger.Debug("ExecutorAgent: executing direct task with intent %s", intent)
+	logDebug("ExecutorAgent: executing direct task with intent %s", intent)
 
 	// Select model based on intent
 	originalModel := e.client.GetModel()

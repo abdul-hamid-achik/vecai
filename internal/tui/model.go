@@ -5,15 +5,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// tuiLog is a prefixed logger for TUI events
-var tuiLog = logger.WithPrefix("TUI")
+// tuiLog is a prefixed logger for TUI events (lazy-init)
+var tuiLog *logging.Logger
+
+// getTUILog returns the prefixed logger, initializing lazily if needed
+func getTUILog() *logging.Logger {
+	if tuiLog == nil {
+		if log := logging.Global(); log != nil {
+			tuiLog = log.WithPrefix("TUI")
+		}
+	}
+	return tuiLog
+}
+
+// logTUIDebug logs a debug message with printf-style formatting for TUI model
+func logTUIDebug(format string, args ...any) {
+	if log := getTUILog(); log != nil {
+		log.Debug(fmt.Sprintf(format, args...))
+	}
+}
 
 // AppState represents the current state of the application
 type AppState int
@@ -165,7 +182,7 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 
 // SetOnReady sets the callback for when TUI is ready
 func (m *Model) SetOnReady(fn func()) {
-	tuiLog.Debug("SetOnReady: callbacks=%p, hasCallback=%v", m.callbacks, fn != nil)
+	logTUIDebug("SetOnReady: callbacks=%p, hasCallback=%v", m.callbacks, fn != nil)
 	m.callbacks.onReady = fn
 }
 
@@ -201,24 +218,24 @@ func (m Model) waitForStream() tea.Cmd {
 func (m Model) signalReady() tea.Cmd {
 	// Capture callbacks pointer to ensure we use the shared instance
 	callbacks := m.callbacks
-	tuiLog.Debug("signalReady: callbacks=%p, hasOnReady=%v", callbacks, callbacks != nil && callbacks.onReady != nil)
+	logTUIDebug("signalReady: callbacks=%p, hasOnReady=%v", callbacks, callbacks != nil && callbacks.onReady != nil)
 	return func() tea.Msg {
-		tuiLog.Debug("signalReady cmd executing")
+		logTUIDebug("signalReady cmd executing")
 		// Close ready channel to signal ready (non-blocking for multiple listeners)
 		select {
 		case <-m.readyChan:
-			tuiLog.Debug("signalReady: readyChan already closed")
+			logTUIDebug("signalReady: readyChan already closed")
 		default:
 			close(m.readyChan)
-			tuiLog.Debug("signalReady: closed readyChan")
+			logTUIDebug("signalReady: closed readyChan")
 		}
 		// Call onReady callback if set
 		if callbacks != nil && callbacks.onReady != nil {
-			tuiLog.Debug("signalReady: calling onReady callback")
+			logTUIDebug("signalReady: calling onReady callback")
 			callbacks.onReady()
-			tuiLog.Debug("signalReady: onReady callback returned")
+			logTUIDebug("signalReady: onReady callback returned")
 		} else {
-			tuiLog.Debug("signalReady: no onReady callback set")
+			logTUIDebug("signalReady: no onReady callback set")
 		}
 		return nil
 	}

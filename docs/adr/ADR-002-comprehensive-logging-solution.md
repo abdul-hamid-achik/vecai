@@ -2,7 +2,9 @@
 
 ## Status
 
-Implemented (2026-01-30)
+**Implemented and Migration Complete (2026-01-30)**
+
+All code has been migrated to use `internal/logging`. The deprecated `internal/logger` package has been removed.
 
 ## Context
 
@@ -400,16 +402,19 @@ internal/
 │   ├── events.go        # Event type constants
 │   ├── metrics.go       # Metrics collection
 │   └── fields.go        # Field helpers
-├── logger/              # DEPRECATED - keep for migration period
-└── debug/               # DEPRECATED - keep for migration period
+└── debug/               # DEPRECATED - to be removed
 ```
+
+**Note**: The `internal/logger/` package was removed on 2026-01-30 after all call sites were migrated.
 
 ### Migration Strategy
 
-1. **Phase 1**: Create `internal/logging/` with new interface
-2. **Phase 2**: Add shim functions to old packages that delegate to new
-3. **Phase 3**: Gradually update call sites to use new package
-4. **Phase 4**: Remove deprecated packages after full migration
+1. **Phase 1**: Create `internal/logging/` with new interface ✅
+2. **Phase 2**: Add shim functions to old packages that delegate to new ✅
+3. **Phase 3**: Gradually update call sites to use new package ✅
+4. **Phase 4**: Remove deprecated packages after full migration ✅
+
+**Migration Completed**: All 31+ logger calls across the codebase have been migrated to use the unified `internal/logging` package. The deprecated `internal/logger` package has been removed.
 
 ### Environment Variables Summary
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
 
@@ -39,7 +38,7 @@ func NewPlannerAgent(client llm.LLMClient, cfg *config.Config, registry *tools.R
 
 // CreatePlan generates a structured plan for a goal
 func (p *PlannerAgent) CreatePlan(ctx context.Context, goal string, codebaseContext string) (*StructuredPlan, error) {
-	logger.Debug("PlannerAgent: creating plan for goal: %s", goal)
+	logDebug("PlannerAgent: creating plan for goal: %s", goal)
 
 	// Use fast model for planning (good at structured thinking)
 	originalModel := p.client.GetModel()
@@ -84,7 +83,7 @@ IMPORTANT: Keep the plan focused and actionable. Each step should be achievable 
 	// Parse the plan from response
 	plan, err := p.parsePlan(resp.Content)
 	if err != nil {
-		logger.Warn("PlannerAgent: failed to parse structured plan, using text plan: %v", err)
+		logWarn("PlannerAgent: failed to parse structured plan, using text plan: %v", err)
 		// Create a simple plan from the text response
 		plan = &StructuredPlan{
 			Goal:    goal,
@@ -99,13 +98,13 @@ IMPORTANT: Keep the plan focused and actionable. Each step should be achievable 
 		}
 	}
 
-	logger.Debug("PlannerAgent: created plan with %d steps", len(plan.Steps))
+	logDebug("PlannerAgent: created plan with %d steps", len(plan.Steps))
 	return plan, nil
 }
 
 // RefinePlan improves an existing plan based on feedback
 func (p *PlannerAgent) RefinePlan(ctx context.Context, plan *StructuredPlan, feedback string) (*StructuredPlan, error) {
-	logger.Debug("PlannerAgent: refining plan based on feedback")
+	logDebug("PlannerAgent: refining plan based on feedback")
 
 	originalModel := p.client.GetModel()
 	p.client.SetTier(config.TierFast)

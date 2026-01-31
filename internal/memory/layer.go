@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 )
 
 // MemoryLayer provides unified access to all memory stores
@@ -27,7 +27,7 @@ func NewMemoryLayer(projectPath string) (*MemoryLayer, error) {
 	// Initialize project memory
 	projectMem, err := NewProjectMemory(projectPath)
 	if err != nil {
-		logger.Warn("Failed to initialize project memory: %v", err)
+		logWarn("Failed to initialize project memory: %v", err)
 	} else {
 		layer.Project = projectMem
 	}
@@ -35,7 +35,7 @@ func NewMemoryLayer(projectPath string) (*MemoryLayer, error) {
 	// Initialize correction memory
 	corrMem, err := NewCorrectionMemory()
 	if err != nil {
-		logger.Warn("Failed to initialize correction memory: %v", err)
+		logWarn("Failed to initialize correction memory: %v", err)
 	} else {
 		layer.Corrections = corrMem
 	}
@@ -43,7 +43,7 @@ func NewMemoryLayer(projectPath string) (*MemoryLayer, error) {
 	// Initialize solution cache
 	solCache, err := NewSolutionCache()
 	if err != nil {
-		logger.Warn("Failed to initialize solution cache: %v", err)
+		logWarn("Failed to initialize solution cache: %v", err)
 	} else {
 		layer.Solutions = solCache
 	}
@@ -200,4 +200,11 @@ func (m *MemoryLayer) Close() error {
 	}
 
 	return nil
+}
+
+// logWarn logs a warning message using the new logging package.
+func logWarn(format string, args ...any) {
+	if log := logging.Global(); log != nil {
+		log.Warn(fmt.Sprintf(format, args...))
+	}
 }

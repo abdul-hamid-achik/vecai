@@ -7,7 +7,6 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 )
 
 // Intent represents the classified user intent
@@ -41,14 +40,14 @@ func (r *TaskRouter) ClassifyIntent(ctx context.Context, query string) Intent {
 	// First try fast keyword-based classification
 	intent := r.classifyByKeywords(query)
 	if intent != "" {
-		logger.Debug("Router: classified by keywords as %s", intent)
+		logDebug("Router: classified by keywords as %s", intent)
 		debug.IntentClassified(query, string(intent), "keywords")
 		return intent
 	}
 
 	// For ambiguous cases, use the LLM (fast model)
 	intent = r.classifyByLLM(ctx, query)
-	logger.Debug("Router: classified by LLM as %s", intent)
+	logDebug("Router: classified by LLM as %s", intent)
 	debug.IntentClassified(query, string(intent), "llm")
 	return intent
 }
@@ -164,7 +163,7 @@ Respond with ONLY the category name, nothing else.`
 
 	resp, err := r.client.Chat(ctx, messages, nil, systemPrompt)
 	if err != nil {
-		logger.Warn("Router: LLM classification failed: %v, defaulting to simple", err)
+		logWarn("Router: LLM classification failed: %v, defaulting to simple", err)
 		return IntentSimple
 	}
 

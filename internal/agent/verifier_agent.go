@@ -7,7 +7,6 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
 
@@ -47,7 +46,7 @@ func NewVerifierAgent(client llm.LLMClient, cfg *config.Config, registry *tools.
 
 // VerifyChanges verifies the changes made in an execution result
 func (v *VerifierAgent) VerifyChanges(ctx context.Context, execution *ExecutionResult, changedFiles []string) (*VerificationResult, error) {
-	logger.Debug("VerifierAgent: verifying changes in %d files", len(changedFiles))
+	logDebug("VerifierAgent: verifying changes in %d files", len(changedFiles))
 
 	// Use genius model for thorough verification
 	originalModel := v.client.GetModel()
@@ -89,13 +88,13 @@ func (v *VerifierAgent) VerifyChanges(ctx context.Context, execution *ExecutionR
 	// Generate summary
 	result.Summary = v.generateSummary(result)
 
-	logger.Debug("VerifierAgent: verification complete, passed=%v, issues=%d", result.Passed, len(result.Issues))
+	logDebug("VerifierAgent: verification complete, passed=%v, issues=%d", result.Passed, len(result.Issues))
 	return result, nil
 }
 
 // QuickVerify does a fast verification without LLM review
 func (v *VerifierAgent) QuickVerify(ctx context.Context, changedFiles []string) (*VerificationResult, error) {
-	logger.Debug("VerifierAgent: quick verification of %d files", len(changedFiles))
+	logDebug("VerifierAgent: quick verification of %d files", len(changedFiles))
 
 	result := &VerificationResult{
 		Passed: true,
@@ -121,7 +120,7 @@ func (v *VerifierAgent) runLinter(ctx context.Context, files []string) *Verifica
 
 	lintTool, ok := v.registry.Get("lint")
 	if !ok {
-		logger.Debug("VerifierAgent: lint tool not available")
+		logDebug("VerifierAgent: lint tool not available")
 		return result
 	}
 
@@ -136,7 +135,7 @@ func (v *VerifierAgent) runLinter(ctx context.Context, files []string) *Verifica
 		"fast": true,
 	})
 	if err != nil {
-		logger.Warn("VerifierAgent: lint failed: %v", err)
+		logWarn("VerifierAgent: lint failed: %v", err)
 		result.Issues = append(result.Issues, VerificationIssue{
 			Severity:    "error",
 			Description: fmt.Sprintf("Linter failed to run: %s", err.Error()),
@@ -163,7 +162,7 @@ func (v *VerifierAgent) runTests(ctx context.Context, files []string) *Verificat
 
 	testTool, ok := v.registry.Get("test_run")
 	if !ok {
-		logger.Debug("VerifierAgent: test_run tool not available")
+		logDebug("VerifierAgent: test_run tool not available")
 		return result
 	}
 
@@ -174,7 +173,7 @@ func (v *VerifierAgent) runTests(ctx context.Context, files []string) *Verificat
 		"timeout": "2m",
 	})
 	if err != nil {
-		logger.Warn("VerifierAgent: tests failed: %v", err)
+		logWarn("VerifierAgent: tests failed: %v", err)
 		result.Issues = append(result.Issues, VerificationIssue{
 			Severity:    "error",
 			Description: fmt.Sprintf("Tests failed to run: %s", err.Error()),
@@ -248,7 +247,7 @@ Be thorough but focus on actual problems, not style preferences.`
 
 	resp, err := v.client.Chat(ctx, messages, nil, systemPrompt)
 	if err != nil {
-		logger.Warn("VerifierAgent: code review failed: %v", err)
+		logWarn("VerifierAgent: code review failed: %v", err)
 		return result
 	}
 

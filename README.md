@@ -748,11 +748,13 @@ Or start a new session:
 
 ### Logging and Debug Mode
 
-vecai has a unified logging system with three output channels:
+vecai has a unified logging system (`internal/logging`) with three output channels:
 
 1. **Console Output** (`stderr`) - Human-readable, respects log level
 2. **Session Logs** (`.vecai/logs/`) - Always captures all levels
 3. **Debug Traces** (`/tmp/vecai-debug/`) - Structured JSONL events (when enabled)
+
+All components use prefixed loggers for clear identification (e.g., `[TUI-APP]`, `[TUI-RUN]`, `[agent]`).
 
 **Enable verbose logging** (debug level without full tracing):
 ```bash
@@ -811,7 +813,7 @@ vecai/
 │   ├── config/         # Configuration management
 │   ├── context/        # Context and token management
 │   ├── llm/            # Ollama client
-│   ├── logging/        # Unified logging system
+│   ├── logging/        # Unified logging system (console, file, JSONL tracing)
 │   ├── memory/         # Persistent memory layer
 │   ├── permissions/    # Permission system
 │   ├── session/        # Session persistence

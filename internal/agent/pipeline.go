@@ -7,7 +7,6 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 	"github.com/abdul-hamid-achik/vecai/internal/ui"
@@ -61,7 +60,7 @@ func (p *Pipeline) Execute(ctx context.Context, task string) (*PipelineResult, e
 
 	// Step 1: Classify intent
 	result.Intent = p.router.ClassifyIntent(ctx, task)
-	logger.Debug("Pipeline: classified intent as %s", result.Intent)
+	logDebug("Pipeline: classified intent as %s", result.Intent)
 
 	// Log intent classification to debug tracer
 	truncatedTask := task
@@ -83,7 +82,7 @@ func (p *Pipeline) Execute(ctx context.Context, task string) (*PipelineResult, e
 
 // executeMultiAgentFlow handles complex tasks with planning
 func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, result *PipelineResult) (*PipelineResult, error) {
-	logger.Debug("Pipeline: using multi-agent flow")
+	logDebug("Pipeline: using multi-agent flow")
 
 	// Step 1: Create plan
 	p.output.Info("Creating plan...")
@@ -175,7 +174,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 
 // executeSingleAgentFlow handles simple tasks directly
 func (p *Pipeline) executeSingleAgentFlow(ctx context.Context, task string, result *PipelineResult) (*PipelineResult, error) {
-	logger.Debug("Pipeline: using single-agent flow")
+	logDebug("Pipeline: using single-agent flow")
 
 	execResult, err := p.executor.ExecuteDirectTask(ctx, task, result.Intent)
 	if err != nil {

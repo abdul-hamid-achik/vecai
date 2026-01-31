@@ -9,7 +9,6 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
 	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
@@ -20,9 +19,6 @@ import (
 var Version = "dev"
 
 func main() {
-	// Ensure log file is closed on exit
-	defer logger.CloseLogFile()
-
 	// Check for --debug and --verbose flags early (before other parsing)
 	debugMode := os.Getenv("VECAI_DEBUG") == "1"
 	verboseMode := false
@@ -85,7 +81,7 @@ func run() error {
 	}
 
 	// Initialize logging - log session start (after version check to avoid creating logs for --version)
-	logger.Debug("vecai session started, args=%v", args)
+	logDebug("vecai session started, args=%v", args)
 
 	// Handle help flag
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
@@ -189,7 +185,7 @@ func run() error {
 	var registry *tools.Registry
 	if analysisMode {
 		registry = tools.NewAnalysisRegistry(&cfg.Tools)
-		logger.Debug("Using analysis registry (read-only tools)")
+		logDebug("Using analysis registry (read-only tools)")
 	} else {
 		registry = tools.NewRegistry(&cfg.Tools)
 	}
@@ -218,7 +214,7 @@ func run() error {
 	// Quick mode: fast response, no tools
 	if quickMode && len(args) > 0 {
 		query := joinArgs(args)
-		logger.Debug("Quick mode with query: %s", query)
+		logDebug("Quick mode with query: %s", query)
 		return a.RunQuick(query)
 	}
 
@@ -228,19 +224,19 @@ func run() error {
 			return fmt.Errorf("plan command requires a goal argument")
 		}
 		goal := args[1]
-		logger.Debug("Entering plan mode with goal: %s", goal)
+		logDebug("Entering plan mode with goal: %s", goal)
 		return a.RunPlan(goal)
 	}
 
 	// One-shot mode if query provided
 	if len(args) > 0 {
 		query := joinArgs(args)
-		logger.Debug("One-shot mode with query: %s", query)
+		logDebug("One-shot mode with query: %s", query)
 		return a.Run(query)
 	}
 
 	// Interactive mode - use TUI if available, otherwise fall back to line mode
-	logger.Debug("Entering interactive mode")
+	logDebug("Entering interactive mode")
 	return a.RunInteractiveTUI()
 }
 
@@ -314,4 +310,12 @@ Prerequisites:
   2. Start Ollama: ollama serve
   3. Pull a model: ollama pull qwen3:8b
 `)
+}
+
+// logDebug logs a debug message using the new logging package.
+// This is a helper to bridge printf-style calls to structured logging.
+func logDebug(format string, args ...any) {
+	if log := logging.Global(); log != nil {
+		log.Debug(fmt.Sprintf(format, args...))
+	}
 }

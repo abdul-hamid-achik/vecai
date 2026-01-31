@@ -1,16 +1,34 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// appLog is a prefixed logger for TUI app events
-var appLog = logger.WithPrefix("TUI-APP")
+// appLog is a prefixed logger for TUI app events (lazy-init)
+var appLog *logging.Logger
+
+// getAppLog returns the prefixed logger, initializing lazily if needed
+func getAppLog() *logging.Logger {
+	if appLog == nil {
+		if log := logging.Global(); log != nil {
+			appLog = log.WithPrefix("TUI-APP")
+		}
+	}
+	return appLog
+}
+
+// logAppDebug logs a debug message with printf-style formatting for TUI app
+func logAppDebug(format string, args ...any) {
+	if log := getAppLog(); log != nil {
+		log.Debug(fmt.Sprintf(format, args...))
+	}
+}
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -24,7 +42,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPress(msg)
 
 	case tea.WindowSizeMsg:
-		appLog.Debug("WindowSizeMsg received: %dx%d, ready=%v", msg.Width, msg.Height, m.ready)
+		logAppDebug("WindowSizeMsg received: %dx%d, ready=%v", msg.Width, msg.Height, m.ready)
 		m.width = msg.Width
 		m.height = msg.Height
 
@@ -35,7 +53,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		viewportHeight := m.height - headerHeight - footerHeight - 2
 
 		if !m.ready {
-			appLog.Debug("First WindowSizeMsg - initializing TUI, callbacks=%p", m.callbacks)
+			logAppDebug("First WindowSizeMsg - initializing TUI, callbacks=%p", m.callbacks)
 			// Initialize viewport
 			m.viewport = viewport.New(m.width, viewportHeight)
 			m.textInput.Width = m.width - 4
@@ -44,7 +62,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinnerActive = false
 
 			// Signal ready and start stream listener
-			appLog.Debug("Returning signalReady command")
+			logAppDebug("Returning signalReady command")
 			return m, tea.Batch(m.waitForStream(), m.signalReady())
 		} else {
 			m.viewport.Width = m.width
