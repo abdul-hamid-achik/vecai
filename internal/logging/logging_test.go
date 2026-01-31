@@ -463,7 +463,7 @@ func TestGlobalLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer Close()
+	defer func() { _ = Close() }()
 
 	// Global should be set
 	if Global() != logger {
@@ -477,7 +477,7 @@ func TestGlobalLogger(t *testing.T) {
 	LogError("error via package")
 
 	// Close should clear global
-	Close()
+	_ = Close()
 	if Global() != nil {
 		t.Error("Global should be nil after Close")
 	}

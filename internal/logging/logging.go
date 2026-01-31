@@ -25,8 +25,6 @@ import (
 // Logger is the main logging interface.
 // It provides methods for console/file logging and structured event tracing.
 type Logger struct {
-	mu sync.RWMutex
-
 	config  Config
 	console *ConsoleWriter
 	file    *FileWriter
