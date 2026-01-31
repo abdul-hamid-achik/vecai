@@ -218,3 +218,16 @@ func Enabled(level Level) bool {
 func DebugEnabled() bool {
 	return Enabled(LevelDebug)
 }
+
+// Shim functions to bridge to the new logging package.
+// These are used during the migration period.
+
+// UseNewLogging is set to true when the new logging package is initialized.
+// When true, all logging calls are forwarded to the new package.
+var UseNewLogging = false
+
+// SetUseNewLogging enables/disables the new logging shim.
+// Call this after initializing the new logging.Logger.
+func SetUseNewLogging(enabled bool) {
+	UseNewLogging = enabled
+}

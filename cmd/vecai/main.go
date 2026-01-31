@@ -10,6 +10,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/skills"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
@@ -22,21 +23,49 @@ func main() {
 	// Ensure log file is closed on exit
 	defer logger.CloseLogFile()
 
-	// Check for --debug flag early (before other parsing)
+	// Check for --debug and --verbose flags early (before other parsing)
 	debugMode := os.Getenv("VECAI_DEBUG") == "1"
+	verboseMode := false
 	for _, arg := range os.Args[1:] {
 		if arg == "--debug" || arg == "-d" {
 			debugMode = true
-			break
+		}
+		if arg == "--verbose" || arg == "-V" {
+			verboseMode = true
 		}
 	}
 
-	// Initialize debug tracer if enabled via flag or env var
+	// Initialize the new unified logging system
+	logConfig := logging.ConfigFromEnv()
+	if debugMode {
+		logConfig = logConfig.WithDebugMode(true)
+	}
+	if verboseMode {
+		logConfig = logConfig.WithVerbose(true)
+	}
+
+	log, err := logging.Init(logConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to init logging: %v\n", err)
+	}
+	defer logging.Close()
+
+	// Also initialize legacy debug tracer for backwards compatibility
+	// This can be removed after full migration
 	if debugMode {
 		if err := debug.Init(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to init debug tracer: %v\n", err)
 		}
 		defer debug.Close()
+	}
+
+	// Log session start
+	if log != nil {
+		log.Event(logging.EventSessionStart,
+			logging.F("version", Version),
+			logging.F("debug_mode", debugMode),
+			logging.F("verbose_mode", verboseMode),
+		)
 	}
 
 	if err := run(); err != nil {
@@ -64,9 +93,9 @@ func run() error {
 		return nil
 	}
 
-	// Parse debug flag (already handled in main, just remove from args)
+	// Parse debug and verbose flags (already handled in main, just remove from args)
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" || args[i] == "--debug" {
+		if args[i] == "-d" || args[i] == "--debug" || args[i] == "-V" || args[i] == "--verbose" {
 			args = append(args[:i], args[i+1:]...)
 			i--
 		}
@@ -246,6 +275,7 @@ Flags:
   --strict                Prompt for all tool executions (including reads)
   --analyze, -a           Token-efficient analysis mode (read-only, minimal prompt)
   --debug, -d             Enable debug tracing to /tmp/vecai-debug/
+  --verbose, -V           Enable verbose logging (debug level without full tracing)
   -v, --version           Show version
   -h, --help              Show help
 

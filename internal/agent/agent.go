@@ -16,7 +16,7 @@ import (
 	ctxmgr "github.com/abdul-hamid-achik/vecai/internal/context"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/abdul-hamid-achik/vecai/internal/memory"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/session"
@@ -175,7 +175,9 @@ func New(cfg Config) *Agent {
 	sessionMgr, err := session.NewManager()
 	if err != nil {
 		// Non-fatal: session persistence won't work but agent can still function
-		logger.Warn("Failed to initialize session manager: %v", err)
+		if log := logging.Global(); log != nil {
+			log.Warn("failed to initialize session manager", logging.Error(err))
+		}
 	}
 
 	// Initialize memory layer if enabled
@@ -184,7 +186,9 @@ func New(cfg Config) *Agent {
 		wd, _ := os.Getwd()
 		memLayer, err = memory.NewMemoryLayer(wd)
 		if err != nil {
-			logger.Warn("Memory layer init failed: %v", err)
+			if log := logging.Global(); log != nil {
+				log.Warn("memory layer init failed", logging.Error(err))
+			}
 		}
 	}
 
@@ -226,7 +230,9 @@ func New(cfg Config) *Agent {
 	if sessionMgr != nil {
 		a.contextMgr.SetOnSave(func(msgs []llm.Message) {
 			if err := a.sessionMgr.Save(msgs, a.llm.GetModel()); err != nil {
-				logger.Warn("Failed to save session: %v", err)
+				if log := logging.Global(); log != nil {
+					log.Warn("failed to save session", logging.Error(err))
+				}
 			}
 		})
 	}
@@ -241,7 +247,9 @@ func New(cfg Config) *Agent {
 					strings.Contains(lower, "always") || strings.Contains(lower, "never") {
 					// Store as correction pattern
 					if err := memLayer.LearnCorrection("", learning, learning, ""); err != nil {
-						logger.Warn("Failed to store correction: %v", err)
+						if log := logging.Global(); log != nil {
+							log.Warn("failed to store correction", logging.Error(err))
+						}
 					}
 				}
 			}
@@ -276,12 +284,12 @@ func (a *Agent) RunQuick(query string) error {
 func (a *Agent) Run(query string) error {
 	// Use TUI if available for consistent experience
 	isTTY := tui.IsTTYAvailable()
-	logger.Debug("Run: query=%q, isTTY=%v", query, isTTY)
+	logDebug("Run: query=%q, isTTY=%v", query, isTTY)
 	if isTTY {
-		logger.Debug("Run: using TUI mode")
+		logDebug("Run: using TUI mode")
 		return a.RunTUI(query, true) // Stay open for follow-up queries
 	}
-	logger.Debug("Run: using line-based mode (no TTY)")
+	logDebug("Run: using line-based mode (no TTY)")
 	return a.runLineBased(query)
 }
 
@@ -296,7 +304,17 @@ func (a *Agent) runLineBased(query string) error {
 	if a.autoTier && !a.quickMode {
 		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
 		a.llm.SetTier(selectedTier)
-		logger.Debug("Auto-tier selected: %s (reason: %s)", selectedTier, a.tierSelector.GetTierReason(query))
+		reason := a.tierSelector.GetTierReason(query)
+		logDebug("Auto-tier selected: %s (reason: %s)", selectedTier, reason)
+
+		// Log tier change event
+		if log := logging.Global(); log != nil {
+			log.Event(logging.EventAgentTierChange,
+				logging.Tier(string(selectedTier)),
+				logging.Reason(reason),
+				logging.Query(query),
+			)
+		}
 	}
 
 	// Check for skill match
@@ -327,7 +345,7 @@ func (a *Agent) runLineBased(query string) error {
 			lastMsg := messages[len(messages)-1]
 			if lastMsg.Role == "assistant" && lastMsg.Content != "" {
 				if captureErr := a.offerCapture(ctx, originalQuery, lastMsg.Content); captureErr != nil {
-					logger.Warn("Capture failed: %v", captureErr)
+					logWarn("Capture failed: %v", captureErr)
 				}
 			}
 		}
@@ -340,20 +358,20 @@ func (a *Agent) runLineBased(query string) error {
 // initialQuery: optional query to execute immediately after TUI is ready
 // interactive: if true, stay open for follow-up queries; if false, quit after initial query (deprecated, always stays open now)
 func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
-	logger.Debug("RunTUI called: query=%q, interactive=%v", initialQuery, interactive)
+	logDebug("RunTUI called: query=%q, interactive=%v", initialQuery, interactive)
 
 	// Create TUI runner
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
-	logger.Debug("TUI runner created")
+	logDebug("TUI runner created")
 
 	// Set up the onReady callback to execute initial query
 	if initialQuery != "" {
-		logger.Debug("Setting up onReady callback for initial query")
+		logDebug("Setting up onReady callback for initial query")
 		runner.SetOnReady(func() {
-			logger.Debug("onReady callback triggered - starting query execution goroutine")
+			logDebug("onReady callback triggered - starting query execution goroutine")
 			go func() {
-				logger.Debug("Query execution goroutine started")
+				logDebug("Query execution goroutine started")
 				// Add user message block first
 				adapter.Info("> " + initialQuery)
 
@@ -361,17 +379,17 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 				adapter.Activity("Processing...")
 
 				// Execute the query
-				logger.Debug("Calling runWithTUIOutput")
+				logDebug("Calling runWithTUIOutput")
 				err := a.runWithTUIOutput(initialQuery, adapter)
 				if err != nil {
-					logger.Debug("Query execution error: %v", err)
+					logDebug("Query execution error: %v", err)
 					adapter.Error(err)
 				}
-				logger.Debug("Query execution complete")
+				logDebug("Query execution complete")
 				// Stay open for follow-up queries
 			}()
 		})
-		logger.Debug("onReady callback registered")
+		logDebug("onReady callback registered")
 	}
 
 	// Set up submit callback for follow-up queries
@@ -541,7 +559,17 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	if a.autoTier && !a.quickMode {
 		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
 		a.llm.SetTier(selectedTier)
-		logger.Debug("Auto-tier selected: %s (reason: %s)", selectedTier, a.tierSelector.GetTierReason(query))
+		reason := a.tierSelector.GetTierReason(query)
+		logDebug("Auto-tier selected: %s (reason: %s)", selectedTier, reason)
+
+		// Log tier change event
+		if log := logging.Global(); log != nil {
+			log.Event(logging.EventAgentTierChange,
+				logging.Tier(string(selectedTier)),
+				logging.Reason(reason),
+				logging.Query(query),
+			)
+		}
 	}
 
 	// Check for skill match
@@ -1175,6 +1203,14 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 			a.permissions.SetMode(a.previousPermMode) // Restore permissions
 			runner.GetModel().SetArchitectMode(false)
 			runner.SendSuccess("Exited architect mode")
+
+			// Log mode change event
+			if log := logging.Global(); log != nil {
+				log.Event(logging.EventAgentModeChange,
+					logging.From("architect"),
+					logging.To("interactive"),
+				)
+			}
 		} else {
 			// Enter architect mode
 			a.architectMode = true
@@ -1185,6 +1221,14 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 			runner.SendInfo("Use Shift+Tab to toggle between Plan and Chat modes")
 			runner.SendInfo("  Plan mode: Design and explore the codebase")
 			runner.SendInfo("  Chat mode: Ask questions and discuss")
+
+			// Log mode change event
+			if log := logging.Global(); log != nil {
+				log.Event(logging.EventAgentModeChange,
+					logging.From("interactive"),
+					logging.To("architect"),
+				)
+			}
 		}
 		return true
 
@@ -1480,6 +1524,14 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 			a.architectMode = false
 			a.permissions.SetMode(a.previousPermMode) // Restore permissions
 			a.output.Success("Exited architect mode")
+
+			// Log mode change event
+			if log := logging.Global(); log != nil {
+				log.Event(logging.EventAgentModeChange,
+					logging.From("architect"),
+					logging.To("interactive"),
+				)
+			}
 		} else {
 			// Enter architect mode
 			a.architectMode = true
@@ -1487,6 +1539,14 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 			a.permissions.SetMode(permissions.ModeAuto) // Bypass permissions
 			a.output.Success("Entered architect mode (permissions bypassed)")
 			a.output.Info("In TUI mode, use Shift+Tab to toggle between Plan and Chat modes")
+
+			// Log mode change event
+			if log := logging.Global(); log != nil {
+				log.Event(logging.EventAgentModeChange,
+					logging.From("interactive"),
+					logging.To("architect"),
+				)
+			}
 		}
 		return true
 
@@ -2152,4 +2212,19 @@ func copyToClipboard(text string) error {
 		return err
 	}
 	return cmd.Wait()
+}
+
+// logDebug logs a debug message using the new logging package.
+// This is a helper to bridge printf-style calls to structured logging.
+func logDebug(format string, args ...any) {
+	if log := logging.Global(); log != nil {
+		log.Debug(fmt.Sprintf(format, args...))
+	}
+}
+
+// logWarn logs a warning message using the new logging package.
+func logWarn(format string, args ...any) {
+	if log := logging.Global(); log != nil {
+		log.Warn(fmt.Sprintf(format, args...))
+	}
 }

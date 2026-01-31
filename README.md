@@ -273,9 +273,10 @@ tools:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OLLAMA_HOST` | No | Ollama server URL (overrides config) |
-| `VECAI_DEBUG` | No | Set to "1" to enable debug tracing |
-| `VECAI_DEBUG_DIR` | No | Override debug log directory |
-| `VECAI_DEBUG_LLM` | No | Set to "1" to log full LLM payloads |
+| `VECAI_DEBUG` | No | Set to "1" to enable full debug tracing |
+| `VECAI_DEBUG_DIR` | No | Override debug trace directory (default: `/tmp/vecai-debug`) |
+| `VECAI_DEBUG_LLM` | No | Set to "1" to log full LLM request/response payloads |
+| `VECAI_LOG_LEVEL` | No | Console log level: `debug`, `info`, `warn`, `error` (default: `info`) |
 | `TAVILY_API_KEY` | No | API key for web search tool |
 
 ## CLI Flags
@@ -289,7 +290,8 @@ tools:
 | `--auto` | Auto-approve all tool executions |
 | `--strict` | Prompt for all tool executions (including reads) |
 | `--analyze, -a` | Token-efficient analysis mode (read-only) |
-| `--debug, -d` | Enable debug tracing to /tmp/vecai-debug/ |
+| `--debug, -d` | Enable full debug tracing to /tmp/vecai-debug/ |
+| `--verbose, -V` | Enable verbose logging (debug level without full tracing) |
 | `-v, --version` | Show version |
 | `-h, --help` | Show help |
 
@@ -744,16 +746,49 @@ Or start a new session:
 /new
 ```
 
-### Debug Mode
+### Logging and Debug Mode
 
-Enable debug logging to troubleshoot issues:
+vecai has a unified logging system with three output channels:
+
+1. **Console Output** (`stderr`) - Human-readable, respects log level
+2. **Session Logs** (`.vecai/logs/`) - Always captures all levels
+3. **Debug Traces** (`/tmp/vecai-debug/`) - Structured JSONL events (when enabled)
+
+**Enable verbose logging** (debug level without full tracing):
+```bash
+vecai --verbose "your query"
+# or
+vecai -V "your query"
+```
+
+**Enable full debug tracing** (includes JSONL event traces):
 ```bash
 vecai --debug "your query"
 # or
-vecai -d "your query"
+VECAI_DEBUG=1 vecai "your query"
 ```
 
-Debug logs are written to `/tmp/vecai-debug/` by default. You can also use the environment variable `VECAI_DEBUG=1`.
+**Log file locations:**
+- Session logs: `.vecai/logs/session_*.log` (symlink: `latest.log`)
+- Debug traces: `/tmp/vecai-debug/session_*.jsonl` (symlink: `latest.jsonl`)
+- LLM payloads: `/tmp/vecai-debug/llm_*.jsonl` (when `VECAI_DEBUG_LLM=1`)
+
+**View logs:**
+```bash
+# View latest session log
+cat .vecai/logs/latest.log
+
+# View debug trace events
+cat /tmp/vecai-debug/latest.jsonl | jq .
+
+# Follow logs in real-time
+tail -f .vecai/logs/latest.log
+```
+
+**Set console log level:**
+```bash
+VECAI_LOG_LEVEL=debug vecai "your query"
+```
 
 ## Development
 
@@ -776,6 +811,7 @@ vecai/
 │   ├── config/         # Configuration management
 │   ├── context/        # Context and token management
 │   ├── llm/            # Ollama client
+│   ├── logging/        # Unified logging system
 │   ├── memory/         # Persistent memory layer
 │   ├── permissions/    # Permission system
 │   ├── session/        # Session persistence
@@ -784,6 +820,7 @@ vecai/
 │   ├── tui/            # Terminal UI (BubbleTea)
 │   └── ui/             # Terminal output helpers
 ├── skills/             # Built-in skills
+├── docs/adr/           # Architecture Decision Records
 ├── Taskfile.yml        # Build tasks
 └── go.mod              # Dependencies
 ```

@@ -12,7 +12,7 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
-	"github.com/abdul-hamid-achik/vecai/internal/logger"
+	"github.com/abdul-hamid-achik/vecai/internal/logging"
 )
 
 // Ollama-specific errors
@@ -139,12 +139,30 @@ func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 
 // Chat sends a message and returns the response
 func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) (*Response, error) {
-	logger.Debug("OllamaChat: sending request with %d messages, %d tools", len(messages), len(tools))
+	log := logging.Global()
+	if log != nil {
+		log.Debug("sending LLM request",
+			logging.Model(c.model),
+			logging.MessageCount(len(messages)),
+			logging.F("tools", len(tools)),
+		)
+	}
 
 	// Generate request ID for tracing
 	requestID := debug.GenerateRequestID()
 	debug.LLMRequest(requestID, c.model, len(messages), len(tools))
 	startTime := time.Now()
+
+	// Log event to new tracer
+	if log != nil {
+		log.SetRequestID(requestID)
+		log.Event(logging.EventLLMRequest,
+			logging.RequestID(requestID),
+			logging.Model(c.model),
+			logging.MessageCount(len(messages)),
+			logging.F("tools", len(tools)),
+		)
+	}
 
 	// Check health first
 	if err := c.CheckHealth(ctx); err != nil {
@@ -240,7 +258,21 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 		"eval_count":        ollamaResp.EvalCount,
 	})
 
-	logger.Debug("OllamaChat: received response with done_reason=%s", ollamaResp.DoneReason)
+	if log != nil {
+		log.Debug("received LLM response",
+			logging.RequestID(requestID),
+			logging.F("done_reason", ollamaResp.DoneReason),
+			logging.DurationSince(startTime),
+		)
+		log.Event(logging.EventLLMResponse,
+			logging.RequestID(requestID),
+			logging.DurationSince(startTime),
+			logging.InputTokens(ollamaResp.PromptEvalCount),
+			logging.OutputTokens(ollamaResp.EvalCount),
+			logging.Success(true),
+		)
+		log.ClearRequestID()
+	}
 	return c.parseResponse(&ollamaResp), nil
 }
 
@@ -345,7 +377,9 @@ func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch c
 				debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
 				return
 			}
-			logger.Error("ChatStream: stream decode error: %v", err)
+			if log := logging.Global(); log != nil {
+				log.Error("stream decode error", logging.Error(err))
+			}
 			debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
 			ch <- StreamChunk{Type: "error", Error: err}
 			return
@@ -373,7 +407,12 @@ func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch c
 		for _, tc := range chunk.Message.ToolCalls {
 			input, err := parseToolArguments(tc.Function.Arguments)
 			if err != nil {
-				logger.Warn("Failed to parse tool arguments for %s: %v", tc.Function.Name, err)
+				if log := logging.Global(); log != nil {
+					log.Warn("failed to parse tool arguments",
+						logging.ToolName(tc.Function.Name),
+						logging.Error(err),
+					)
+				}
 				input = make(map[string]any)
 			}
 
@@ -453,7 +492,12 @@ func (c *OllamaClient) parseResponse(resp *OllamaChatResponse) *Response {
 	for _, tc := range resp.Message.ToolCalls {
 		input, err := parseToolArguments(tc.Function.Arguments)
 		if err != nil {
-			logger.Warn("Failed to parse tool arguments for %s: %v", tc.Function.Name, err)
+			if log := logging.Global(); log != nil {
+				log.Warn("failed to parse tool arguments",
+					logging.ToolName(tc.Function.Name),
+					logging.Error(err),
+				)
+			}
 			input = make(map[string]any)
 		}
 
