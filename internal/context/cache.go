@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -107,13 +108,21 @@ func (c *ToolResultCache) Size() int {
 	return len(c.entries)
 }
 
-// generateKey creates a unique cache key from tool name and input
+// generateKey creates a unique cache key from tool name and input.
+// Keys in the input map are sorted to ensure deterministic output.
 func (c *ToolResultCache) generateKey(toolName string, input map[string]any) string {
-	// Create a deterministic string from input
 	var parts []string
 	parts = append(parts, toolName)
-	for k, v := range input {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+
+	// Sort map keys for deterministic key generation
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, input[k]))
 	}
 	data := strings.Join(parts, "|")
 	hash := sha256.Sum256([]byte(data))

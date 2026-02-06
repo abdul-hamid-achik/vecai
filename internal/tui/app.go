@@ -51,6 +51,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		headerHeight := 1
 		footerHeight := 2
 		viewportHeight := m.height - headerHeight - footerHeight - 2
+		if viewportHeight < 1 {
+			viewportHeight = 1 // Prevent negative/zero viewport height on small terminals
+		}
 
 		if !m.ready {
 			logAppDebug("First WindowSizeMsg - initializing TUI, callbacks=%p", m.callbacks)
@@ -85,6 +88,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case QuitMsg:
 		m.quitting = true
+		// Close doneChan to unblock all waitForStream goroutines
+		select {
+		case <-m.doneChan:
+			// Already closed
+		default:
+			close(m.doneChan)
+		}
 		return m, tea.Quit
 	}
 
@@ -104,6 +114,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle Ctrl+C globally
 	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
+		// Close doneChan to unblock all waitForStream goroutines
+		select {
+		case <-m.doneChan:
+		default:
+			close(m.doneChan)
+		}
 		return m, tea.Quit
 	}
 
@@ -246,11 +262,12 @@ func (m Model) handlePermissionKey(key string) (tea.Model, tea.Cmd) {
 	}
 	m.AddBlock(feedback)
 
-	// Return to idle state
-	m.state = StateIdle
-	m.textInput.Focus()
+	// Return to streaming state - the agent is still running and will send
+	// more messages (tool results, text, done). Transition to idle happens
+	// when the "done" message arrives.
+	m.state = StateStreaming
 
-	return m, nil
+	return m, m.waitForStream()
 }
 
 // handleStreamMsg handles streaming messages from the adapter
@@ -336,10 +353,10 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 	case "tool_result":
 		// Clear activity message when tool completes
 		m.activityMessage = ""
-		// Truncate long results
+		// Truncate long results (UTF-8 safe)
 		result := msg.Text
 		if len(result) > 500 {
-			result = result[:500] + "..."
+			result = truncateUTF8Safe(result, 500)
 		}
 		m.AddBlock(ContentBlock{
 			Type:     BlockToolResult,

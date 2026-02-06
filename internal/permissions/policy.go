@@ -37,10 +37,10 @@ func (m Mode) String() string {
 type Decision int
 
 const (
-	DecisionAllow      Decision = iota // Allow this time
-	DecisionAlwaysAllow                // Always allow this tool
-	DecisionDeny                       // Deny this time
-	DecisionNeverAllow                 // Never allow this tool
+	DecisionAllow       Decision = iota // Allow this time
+	DecisionAlwaysAllow                 // Always allow this tool
+	DecisionDeny                        // Deny this time
+	DecisionNeverAllow                  // Never allow this tool
 )
 
 // InputHandler interface for getting user input
@@ -56,6 +56,7 @@ type OutputHandler interface {
 // Policy manages permission checking
 type Policy struct {
 	mode    Mode
+	modeMu  sync.RWMutex // Protects mode field from concurrent access
 	input   InputHandler
 	output  OutputHandler
 	cache   map[string]Decision
@@ -74,13 +75,15 @@ func NewPolicy(mode Mode, input InputHandler, output OutputHandler) *Policy {
 
 // Check checks if a tool execution is allowed
 func (p *Policy) Check(toolName string, level tools.PermissionLevel, description string) (bool, error) {
+	currentMode := p.GetMode()
+
 	// Auto mode always allows
-	if p.mode == ModeAuto {
+	if currentMode == ModeAuto {
 		return true, nil
 	}
 
 	// Analysis mode: auto-approve reads, block writes/executes (no prompts)
-	if p.mode == ModeAnalysis {
+	if currentMode == ModeAnalysis {
 		if level == tools.PermissionRead {
 			return true, nil
 		}
@@ -103,7 +106,7 @@ func (p *Policy) Check(toolName string, level tools.PermissionLevel, description
 	}
 
 	// In ask mode, auto-approve reads
-	if p.mode == ModeAsk && level == tools.PermissionRead {
+	if currentMode == ModeAsk && level == tools.PermissionRead {
 		return true, nil
 	}
 
@@ -149,13 +152,17 @@ func (p *Policy) promptUser(toolName string, level tools.PermissionLevel, descri
 	}
 }
 
-// GetMode returns the current permission mode
+// GetMode returns the current permission mode (thread-safe)
 func (p *Policy) GetMode() Mode {
+	p.modeMu.RLock()
+	defer p.modeMu.RUnlock()
 	return p.mode
 }
 
-// SetMode changes the permission mode
+// SetMode changes the permission mode (thread-safe)
 func (p *Policy) SetMode(mode Mode) {
+	p.modeMu.Lock()
+	defer p.modeMu.Unlock()
 	p.mode = mode
 }
 

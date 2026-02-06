@@ -71,7 +71,7 @@ func (t *WebSearchTool) InputSchema() map[string]any {
 }
 
 func (t *WebSearchTool) Permission() PermissionLevel {
-	return PermissionRead
+	return PermissionExecute // Sends data to external service; requires explicit approval
 }
 
 // tavilyRequest represents the request body for Tavily API

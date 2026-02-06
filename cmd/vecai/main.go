@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/abdul-hamid-achik/vecai/internal/agent"
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -205,6 +207,20 @@ func run() error {
 		AutoTier:     true,        // Enable smart tier selection by default
 		CaptureMode:  captureMode, // Prompt to save responses to notes
 	})
+	defer func() {
+		if err := a.Close(); err != nil {
+			logDebug("error closing agent: %v", err)
+		}
+	}()
+
+	// Handle graceful shutdown on signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		_ = a.Close()
+		os.Exit(0)
+	}()
 
 	// Handle models subcommand
 	if len(args) > 0 && args[0] == "models" {
@@ -241,14 +257,7 @@ func run() error {
 }
 
 func joinArgs(args []string) string {
-	result := ""
-	for i, arg := range args {
-		if i > 0 {
-			result += " "
-		}
-		result += arg
-	}
-	return result
+	return strings.Join(args, " ")
 }
 
 func printHelp() {

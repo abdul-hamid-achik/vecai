@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -25,15 +26,16 @@ var (
 type OllamaClient struct {
 	baseURL    string
 	model      string
+	modelMu    sync.RWMutex // Protects model field from concurrent access
 	config     *config.Config
 	httpClient *http.Client
 }
 
 // OllamaMessage represents a message in Ollama's format
 type OllamaMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCalls  []OllamaToolCall `json:"tool_calls,omitempty"`
+	Role      string           `json:"role"`
+	Content   string           `json:"content"`
+	ToolCalls []OllamaToolCall `json:"tool_calls,omitempty"`
 }
 
 // OllamaToolCall represents a tool call in Ollama's format (OpenAI-compatible)
@@ -67,9 +69,9 @@ type OllamaChatRequest struct {
 
 // OllamaOptions represents model options
 type OllamaOptions struct {
-	Temperature   float64 `json:"temperature,omitempty"`
-	NumPredict    int     `json:"num_predict,omitempty"`
-	NumCtx        int     `json:"num_ctx,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+	NumPredict  int     `json:"num_predict,omitempty"`
+	NumCtx      int     `json:"num_ctx,omitempty"`
 }
 
 // OllamaChatResponse represents a chat response from Ollama
@@ -102,18 +104,24 @@ func NewOllamaClient(cfg *config.Config) *OllamaClient {
 	}
 }
 
-// SetModel changes the current model
+// SetModel changes the current model (thread-safe)
 func (c *OllamaClient) SetModel(model string) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
 	c.model = model
 }
 
-// SetTier changes the model tier
+// SetTier changes the model tier (thread-safe)
 func (c *OllamaClient) SetTier(tier config.ModelTier) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
 	c.model = c.config.GetModel(tier)
 }
 
-// GetModel returns the current model
+// GetModel returns the current model (thread-safe)
 func (c *OllamaClient) GetModel() string {
+	c.modelMu.RLock()
+	defer c.modelMu.RUnlock()
 	return c.model
 }
 
@@ -139,10 +147,13 @@ func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 
 // Chat sends a message and returns the response
 func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) (*Response, error) {
+	// Snapshot model name under lock for consistent use throughout this call
+	currentModel := c.GetModel()
+
 	log := logging.Global()
 	if log != nil {
 		log.Debug("sending LLM request",
-			logging.Model(c.model),
+			logging.Model(currentModel),
 			logging.MessageCount(len(messages)),
 			logging.F("tools", len(tools)),
 		)
@@ -150,7 +161,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	// Generate request ID for tracing
 	requestID := debug.GenerateRequestID()
-	debug.LLMRequest(requestID, c.model, len(messages), len(tools))
+	debug.LLMRequest(requestID, currentModel, len(messages), len(tools))
 	startTime := time.Now()
 
 	// Log event to new tracer
@@ -158,7 +169,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 		log.SetRequestID(requestID)
 		log.Event(logging.EventLLMRequest,
 			logging.RequestID(requestID),
-			logging.Model(c.model),
+			logging.Model(currentModel),
 			logging.MessageCount(len(messages)),
 			logging.F("tools", len(tools)),
 		)
@@ -175,7 +186,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	ollamaTools := c.buildTools(tools)
 
 	request := OllamaChatRequest{
-		Model:    c.model,
+		Model:    currentModel,
 		Messages: ollamaMessages,
 		Tools:    ollamaTools,
 		Stream:   false,
@@ -188,7 +199,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	// Log full request payload if enabled
 	debug.LLMRequestFull(requestID, map[string]any{
-		"model":       c.model,
+		"model":       currentModel,
 		"messages":    len(ollamaMessages),
 		"tools":       len(ollamaTools),
 		"temperature": c.config.Temperature,
@@ -222,7 +233,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", ErrModelNotFound, c.model)
+			return nil, fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)
 		}
 		return nil, fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(respBody))
 	}
@@ -236,7 +247,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	if ollamaResp.Error != "" {
 		var err error
 		if ollamaResp.Error == "model not found" {
-			err = fmt.Errorf("%w: %s", ErrModelNotFound, c.model)
+			err = fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)
 		} else {
 			err = fmt.Errorf("ollama error: %s", ollamaResp.Error)
 		}
@@ -280,13 +291,16 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 100)
 
+	// Snapshot model name under lock for consistent use throughout this call
+	currentModel := c.GetModel()
+
 	// Generate request ID for tracing (before goroutine to ensure consistent ID)
 	requestID := debug.GenerateRequestID()
 
 	go func() {
 		defer close(ch)
 
-		debug.LLMRequest(requestID, c.model, len(messages), len(tools))
+		debug.LLMRequest(requestID, currentModel, len(messages), len(tools))
 		startTime := time.Now()
 
 		// Check health first
@@ -301,7 +315,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		ollamaTools := c.buildTools(tools)
 
 		request := OllamaChatRequest{
-			Model:    c.model,
+			Model:    currentModel,
 			Messages: ollamaMessages,
 			Tools:    ollamaTools,
 			Stream:   true,
@@ -340,7 +354,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode == http.StatusNotFound {
-				ch <- StreamChunk{Type: "error", Error: fmt.Errorf("%w: %s", ErrModelNotFound, c.model)}
+				ch <- StreamChunk{Type: "error", Error: fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)}
 			} else {
 				ch <- StreamChunk{Type: "error", Error: fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(body))}
 			}

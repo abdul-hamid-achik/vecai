@@ -102,6 +102,7 @@ type Model struct {
 	streamChan chan StreamMsg
 	resultChan chan PermissionResult
 	readyChan  chan struct{} // Signals when TUI is ready
+	doneChan   chan struct{} // Closed on quit to unblock waitForStream goroutines
 
 	// Permission state
 	permToolName    string
@@ -158,7 +159,7 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ti.Width = 50
 
 	// Apply Nord theme styling to textinput
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)    // Cyan cursor
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)     // Cyan cursor
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(nord3) // Dim placeholder
 	ti.TextStyle = lipgloss.NewStyle().Foreground(nord4)        // Primary text
 
@@ -166,11 +167,12 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	return Model{
 		state:         StateStarting,
 		modelName:     modelName,
-		blocks:        &blocks,             // Pointer survives model copies
+		blocks:        &blocks,            // Pointer survives model copies
 		streaming:     &strings.Builder{}, // Pointer survives model copies
 		streamChan:    streamChan,
 		resultChan:    make(chan PermissionResult, 1),
 		readyChan:     make(chan struct{}),
+		doneChan:      make(chan struct{}),
 		textInput:     ti,
 		maxIterations: 20,
 		interruptChan: make(chan struct{}, 1),
@@ -206,11 +208,19 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// waitForStream returns a command that waits for stream messages
+// waitForStream returns a command that waits for stream messages.
+// Uses a select with doneChan to prevent goroutine leaks on quit.
 func (m Model) waitForStream() tea.Cmd {
 	return func() tea.Msg {
-		msg := <-m.streamChan
-		return msg
+		select {
+		case msg, ok := <-m.streamChan:
+			if !ok {
+				return QuitMsg{}
+			}
+			return msg
+		case <-m.doneChan:
+			return QuitMsg{}
+		}
 	}
 }
 
@@ -284,11 +294,11 @@ func (m *Model) GetInterruptChan() chan struct{} {
 // GetSessionStats returns current session statistics
 func (m *Model) GetSessionStats() SessionStats {
 	return SessionStats{
-		LoopIteration:  m.loopIteration,
-		MaxIterations:  m.maxIterations,
-		LoopStartTime:  m.loopStartTime,
-		InputTokens:    m.inputTokens,
-		OutputTokens:   m.outputTokens,
+		LoopIteration: m.loopIteration,
+		MaxIterations: m.maxIterations,
+		LoopStartTime: m.loopStartTime,
+		InputTokens:   m.inputTokens,
+		OutputTokens:  m.outputTokens,
 	}
 }
 
