@@ -8,14 +8,6 @@ import (
 	"strings"
 )
 
-// validatePathWithinProject checks that the resolved absolute path is within
-// the current working directory (project root). This prevents path traversal
-// attacks where the LLM could read/write files outside the project.
-// Deprecated: Use ValidatePath() or ValidatePathForWrite() from file_security.go instead.
-func validatePathWithinProject(absPath string) error {
-	return ValidatePath(absPath)
-}
-
 // ReadFileTool reads file contents
 type ReadFileTool struct{}
 
@@ -174,13 +166,7 @@ func (t *ReadFileTool) chunkFile(content string, path string, maxTokens int) (st
 		avgLineLen = 40 // Default average line length
 	}
 	maxChars := maxTokens * 4
-	maxLines := maxChars / avgLineLen
-	if maxLines < ChunkPreviewLines {
-		maxLines = ChunkPreviewLines
-	}
-	if maxLines > totalLines {
-		maxLines = totalLines
-	}
+	maxLines := min(max(maxChars/avgLineLen, ChunkPreviewLines), totalLines)
 
 	var sb strings.Builder
 
