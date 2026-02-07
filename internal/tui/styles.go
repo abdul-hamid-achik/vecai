@@ -147,19 +147,29 @@ var (
 				Bold(true)
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// MODE BADGES
+	// MODE SELECTOR (input line pills — Claude Code style)
 	// ═══════════════════════════════════════════════════════════════════════
-	modeBadgeAskStyle = lipgloss.NewStyle().
-				Foreground(colorAccent).
-				Bold(true)
+	modeActiveAskStyle = lipgloss.NewStyle().
+				Background(nord8).
+				Foreground(lipgloss.Color("#2e3440")).
+				Bold(true).
+				Padding(0, 1)
 
-	modeBadgePlanStyle = lipgloss.NewStyle().
-				Foreground(colorCaution).
-				Bold(true)
+	modeActivePlanStyle = lipgloss.NewStyle().
+				Background(nord13).
+				Foreground(lipgloss.Color("#2e3440")).
+				Bold(true).
+				Padding(0, 1)
 
-	modeBadgeBuildStyle = lipgloss.NewStyle().
-				Foreground(colorSuccess).
-				Bold(true)
+	modeActiveBuildStyle = lipgloss.NewStyle().
+				Background(nord14).
+				Foreground(lipgloss.Color("#2e3440")).
+				Bold(true).
+				Padding(0, 1)
+
+	modeInactiveStyle = lipgloss.NewStyle().
+				Foreground(nord3).
+				Padding(0, 1)
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// TOOL VISUALIZATION

@@ -128,6 +128,49 @@ func TestMixedListRendering(t *testing.T) {
 	}
 }
 
+// --- Mode Selector Rendering Tests ---
+
+func TestRenderModeSelector_ShowsAllModes(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	// Default mode is Build
+	rendered := model.renderModeSelector()
+	plain := stripANSI(rendered)
+
+	if !strings.Contains(plain, "Ask") {
+		t.Errorf("Expected 'Ask' in mode selector, got %q", plain)
+	}
+	if !strings.Contains(plain, "Plan") {
+		t.Errorf("Expected 'Plan' in mode selector, got %q", plain)
+	}
+	if !strings.Contains(plain, "Build") {
+		t.Errorf("Expected 'Build' in mode selector, got %q", plain)
+	}
+	// Should contain the separator
+	if !strings.Contains(plain, "▸") {
+		t.Errorf("Expected '▸' separator in mode selector, got %q", plain)
+	}
+}
+
+func TestRenderModeSelector_HighlightsActiveMode(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	// Test each mode - the rendered output should contain all three labels
+	modes := []AgentMode{ModeAsk, ModePlan, ModeBuild}
+	for _, mode := range modes {
+		model.SetAgentMode(mode)
+		rendered := model.renderModeSelector()
+		plain := stripANSI(rendered)
+
+		// All three should be present regardless of active mode
+		if !strings.Contains(plain, "Ask") || !strings.Contains(plain, "Plan") || !strings.Contains(plain, "Build") {
+			t.Errorf("Mode %v: expected all three mode labels in %q", mode, plain)
+		}
+	}
+}
+
 // --- Tool Visualization Rendering Tests ---
 
 func TestRenderToolCallBlock_CategoryIcons(t *testing.T) {

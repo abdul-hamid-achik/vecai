@@ -351,8 +351,9 @@ func (m Model) renderFooter() string {
 		}
 	}
 
-	// Input prompt
-	prompt := inputPromptStyle.Render("> ")
+	// Mode selector + input prompt (Claude Code style)
+	modeSelector := m.renderModeSelector()
+	prompt := modeSelector + " "
 
 	// Always show text input - user can type and queue messages
 	inputLine := prompt + m.textInput.View()
@@ -433,16 +434,6 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, warningStyle.Render(fmt.Sprintf("+%d queued", queueLen)))
 	}
 
-	// Show mode badge (color-coded)
-	switch m.agentMode {
-	case ModeAsk:
-		parts = append(parts, modeBadgeAskStyle.Render("Ask"))
-	case ModePlan:
-		parts = append(parts, modeBadgePlanStyle.Render("Plan"))
-	case ModeBuild:
-		parts = append(parts, modeBadgeBuildStyle.Render("Build"))
-	}
-
 	// Show contextual hint based on state
 	switch m.state {
 	case StateStreaming, StateRateLimited:
@@ -495,6 +486,30 @@ func formatByteCount(n int) string {
 		return fmt.Sprintf("%.1f KB", float64(n)/1024)
 	}
 	return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
+}
+
+// renderModeSelector renders the Claude Code-style mode pills on the input line
+func (m Model) renderModeSelector() string {
+	modes := []struct {
+		mode        AgentMode
+		label       string
+		activeStyle lipgloss.Style
+	}{
+		{ModeAsk, "Ask", modeActiveAskStyle},
+		{ModePlan, "Plan", modeActivePlanStyle},
+		{ModeBuild, "Build", modeActiveBuildStyle},
+	}
+
+	var parts []string
+	for _, md := range modes {
+		if m.agentMode == md.mode {
+			parts = append(parts, md.activeStyle.Render(md.label))
+		} else {
+			parts = append(parts, modeInactiveStyle.Render(md.label))
+		}
+	}
+
+	return strings.Join(parts, "") + " " + inputPromptStyle.Render("▸")
 }
 
 // renderPermissionFooter renders the permission prompt in the footer

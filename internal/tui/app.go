@@ -113,8 +113,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// handleModeCycle cycles the agent mode and shows feedback
+func (m Model) handleModeCycle() (tea.Model, tea.Cmd) {
+	newMode := m.CycleAgentMode()
+	var feedback string
+	switch newMode {
+	case ModeAsk:
+		feedback = "Ask mode — read-only exploration, Q&A"
+	case ModePlan:
+		feedback = "Plan mode — design & explore, writes prompt"
+	case ModeBuild:
+		feedback = "Build mode — full execution"
+	}
+	m.AddBlock(ContentBlock{Type: BlockInfo, Content: feedback})
+	return m, nil
+}
+
 // handleKeyPress handles keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	logAppDebug("Key: type=%d str=%q", msg.Type, msg.String())
+
 	// Handle Ctrl+C globally
 	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
@@ -195,22 +213,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 	case tea.KeyShiftTab:
-		// Cycle through modes: Ask → Plan → Build → Ask
-		newMode := m.CycleAgentMode()
-		var feedback string
-		switch newMode {
-		case ModeAsk:
-			feedback = "Ask mode — read-only exploration, Q&A"
-		case ModePlan:
-			feedback = "Plan mode — design & explore, writes prompt"
-		case ModeBuild:
-			feedback = "Build mode — full execution"
-		}
-		m.AddBlock(ContentBlock{
-			Type:    BlockInfo,
-			Content: feedback,
-		})
-		return m, nil
+		return m.handleModeCycle()
+	}
+
+	// Fallback for terminals that don't send standard CSI backtab
+	if msg.String() == "shift+tab" {
+		return m.handleModeCycle()
 	}
 
 	// Handle normal input state
@@ -275,6 +283,22 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Update completer after each keystroke
 	m.completer.Update(m.textInput.Value())
+
+	// Recalculate viewport height when completer visibility changes
+	completerLines := 0
+	if m.completer.IsActive() {
+		visible := m.completer.VisibleCount()
+		if visible > m.completer.maxVisible {
+			visible = m.completer.maxVisible
+		}
+		completerLines = visible + 1 // +1 for the newline separator
+	}
+	newFooterHeight := 2 + completerLines
+	newViewportHeight := m.height - 1 - newFooterHeight - 2
+	if newViewportHeight > 0 && newViewportHeight != m.viewport.Height {
+		m.viewport.Height = newViewportHeight
+		m.updateViewportContent()
+	}
 
 	return m, cmd
 }
