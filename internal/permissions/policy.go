@@ -166,6 +166,13 @@ func (p *Policy) SetMode(mode Mode) {
 	p.mode = mode
 }
 
+// CacheDecision stores a permission decision for a tool
+func (p *Policy) CacheDecision(toolName string, decision Decision) {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	p.cache[toolName] = decision
+}
+
 // ClearCache clears all cached decisions
 func (p *Policy) ClearCache() {
 	p.cacheMu.Lock()

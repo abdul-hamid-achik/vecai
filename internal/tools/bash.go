@@ -10,7 +10,10 @@ import (
 )
 
 // BashTool executes bash commands
-type BashTool struct{}
+type BashTool struct {
+	Sandbox    Sandbox // OS-level sandbox; nil means no sandboxing
+	ProjectDir string  // Project root for sandbox filesystem restrictions
+}
 
 func (t *BashTool) Name() string {
 	return "bash"
@@ -45,50 +48,20 @@ func (t *BashTool) Permission() PermissionLevel {
 // maxBashTimeout is the maximum allowed timeout for bash commands (5 minutes)
 const maxBashTimeout = 300
 
-// dangerousPatterns contains shell patterns that are blocked for safety.
-// These prevent the LLM from executing destructive or exfiltration commands.
-var dangerousPatterns = []string{
-	"rm -rf /",
-	"rm -rf /*",
-	"mkfs.",
-	"dd if=/dev/",
-	":(){:|:&};:", // fork bomb
-	"> /dev/sd",
-	"chmod -R 777 /",
-	"shutdown",
-	"reboot",
-	"init 0",
-	"init 6",
-}
-
-// networkExfilPatterns are blocked when commands appear to exfiltrate data
-var networkExfilPatterns = []string{
-	"/dev/tcp/",
-	"/dev/udp/",
-}
-
 func (t *BashTool) Execute(ctx context.Context, input map[string]any) (string, error) {
 	command, ok := input["command"].(string)
 	if !ok || command == "" {
 		return "", fmt.Errorf("command is required")
 	}
 
-	// Check for dangerous command patterns
-	lowerCmd := strings.ToLower(strings.TrimSpace(command))
-	for _, pattern := range dangerousPatterns {
-		if strings.Contains(lowerCmd, pattern) {
-			return "", fmt.Errorf("command blocked: contains dangerous pattern %q", pattern)
-		}
-	}
-	for _, pattern := range networkExfilPatterns {
-		if strings.Contains(command, pattern) {
-			return "", fmt.Errorf("command blocked: contains network exfiltration pattern %q", pattern)
-		}
+	// Multi-layer command safety check (blocklist + obfuscation + evasion)
+	if err := CheckCommandSafety(command); err != nil {
+		return "", err
 	}
 
 	timeout := 60
-	if t, ok := input["timeout"].(float64); ok && t > 0 {
-		timeout = int(t)
+	if tv, ok := input["timeout"].(float64); ok && tv > 0 {
+		timeout = int(tv)
 	}
 	// Cap timeout to prevent indefinitely long-running commands
 	if timeout > maxBashTimeout {
@@ -99,7 +72,23 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any) (string, e
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	// Determine command execution: sandboxed or direct
+	exe := "bash"
+	args := []string{"-c", command}
+	if t.Sandbox != nil && t.Sandbox.Available() {
+		projectDir := t.ProjectDir
+		if projectDir == "" {
+			projectDir = "."
+		}
+		var err error
+		exe, args, err = t.Sandbox.Wrap(command, projectDir)
+		if err != nil {
+			return "", fmt.Errorf("sandbox wrap failed: %w", err)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Env = SanitizedEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

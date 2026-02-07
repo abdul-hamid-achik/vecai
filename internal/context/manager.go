@@ -68,6 +68,9 @@ type ContextManager struct {
 	cachedTokens int
 	statsDirty   bool
 
+	// Token calibration (optional, for future use)
+	calibrator *TokenCalibrator
+
 	// Session persistence callback
 	onSave func([]llm.Message)
 }
@@ -183,7 +186,7 @@ func (cm *ContextManager) GetBreakdown() MessageBreakdown {
 		tokens := estimateTokens(msg.Content)
 		switch msg.Role {
 		case "user":
-			// Check if this is a tool result message
+			// Check if this is a tool result message (legacy format)
 			if isToolResultMessage(msg.Content) {
 				breakdown.ToolResults += tokens
 			} else {
@@ -191,6 +194,8 @@ func (cm *ContextManager) GetBreakdown() MessageBreakdown {
 			}
 		case "assistant":
 			breakdown.AssistantMsgs += tokens
+		case "tool":
+			breakdown.ToolResults += tokens
 		}
 	}
 
@@ -303,15 +308,37 @@ func (cm *ContextManager) calculateTotalTokens() int {
 	return total
 }
 
-// estimateTokens provides a rough token estimate for text
-// Uses the chars/4 + 20% heuristic (similar to existing rate limiting code)
+// estimateTokens provides a content-aware token estimate for text.
+// Uses different chars-per-token ratios for code vs prose.
 func estimateTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	// chars/4 is a common approximation, then add 20% buffer
-	base := len(text) / 4
-	return base + (base / 5)
+	// Content-aware estimation
+	ratio := estimateCharsPerToken(text)
+	base := int(float64(len(text)) / ratio)
+	// Add 10% buffer instead of 20% for more accuracy
+	return base + (base / 10)
+}
+
+// estimateCharsPerToken returns the estimated characters per token based on content type.
+// Code has more symbols/punctuation = fewer chars per token.
+// Prose has more regular words = more chars per token.
+func estimateCharsPerToken(text string) float64 {
+	punctCount := 0
+	for _, r := range text {
+		if (r >= '!' && r <= '/') || (r >= ':' && r <= '@') ||
+			(r >= '[' && r <= '`') || (r >= '{' && r <= '~') {
+			punctCount++
+		}
+	}
+	punctRatio := float64(punctCount) / float64(max(len(text), 1))
+
+	// High punctuation (>15%) suggests code
+	if punctRatio > 0.15 {
+		return 3.2 // Code: ~3.2 chars per token
+	}
+	return 4.0 // Prose: ~4.0 chars per token
 }
 
 // isToolResultMessage checks if a message content looks like tool results

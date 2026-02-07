@@ -38,14 +38,28 @@ type OllamaConfig struct {
 // AgentConfig holds multi-agent configuration
 type AgentConfig struct {
 	MaxRetries          int  `yaml:"max_retries"`          // Max retries per step (default: 3)
+	MaxIterations       int  `yaml:"max_iterations"`       // Max agent loop iterations (default: 20)
 	VerificationEnabled bool `yaml:"verification_enabled"` // Enable verification agent (default: true)
+}
+
+// ParallelConfig holds parallel tool execution configuration
+type ParallelConfig struct {
+	Enabled        bool `yaml:"enabled"`         // Enable parallel tool execution (default: true)
+	MaxConcurrency int  `yaml:"max_concurrency"` // Max concurrent tool executions (default: 4)
+}
+
+// WebSearchConfig holds web search rate limiting configuration
+type WebSearchConfig struct {
+	MinRequestDelay time.Duration `yaml:"min_request_delay"` // Min delay between requests (default: 1s)
 }
 
 // MemoryConfig holds memory layer configuration
 type MemoryConfig struct {
-	Enabled    bool   `yaml:"enabled"`     // Enable memory layer (default: true)
-	ProjectDir string `yaml:"project_dir"` // Per-project memory (default: ".vecai/memory")
-	GlobalDir  string `yaml:"global_dir"`  // Global memory (default: "~/.config/vecai/memory")
+	Enabled         bool   `yaml:"enabled"`              // Enable memory layer (default: true)
+	ProjectDir      string `yaml:"project_dir"`          // Per-project memory (default: ".vecai/memory")
+	GlobalDir       string `yaml:"global_dir"`           // Global memory (default: "~/.config/vecai/memory")
+	StoreMaxEntries int    `yaml:"store_max_entries"`    // Max entries per store (default: 10000, 0 = unlimited)
+	StoreMaxDiskMB  int    `yaml:"store_max_disk_mb"`    // Max disk size per store in MB (default: 10, 0 = unlimited)
 }
 
 // RateLimitConfig holds rate limiting configuration (kept for backward compatibility)
@@ -74,11 +88,18 @@ type AnalysisConfig struct {
 	SmartToolSelection bool `yaml:"smart_tool_selection"` // Enable on-demand tool loading
 }
 
+// SandboxConfig holds sandbox configuration for bash command execution
+type SandboxConfig struct {
+	Enabled  bool `yaml:"enabled"`   // Enable OS-level sandboxing (default: true)
+	AllowNet bool `yaml:"allow_net"` // Allow network access in sandbox (default: false)
+}
+
 // ToolsConfig holds configuration for all tools
 type ToolsConfig struct {
 	Vecgrep VecgrepToolConfig `yaml:"vecgrep"`
 	Noted   NotedToolConfig   `yaml:"noted"`
 	Gpeek   GpeekToolConfig   `yaml:"gpeek"`
+	Sandbox SandboxConfig     `yaml:"sandbox"`
 }
 
 // VecgrepToolConfig holds vecgrep-specific configuration
@@ -115,6 +136,8 @@ type Config struct {
 	RateLimit   RateLimitConfig `yaml:"rate_limit"` // Kept for backward compat
 	Context     ContextConfig   `yaml:"context"`
 	Analysis    AnalysisConfig  `yaml:"analysis"`
+	Parallel    ParallelConfig  `yaml:"parallel"`
+	WebSearch   WebSearchConfig `yaml:"web_search"`
 
 	// Internal: where config was loaded from
 	configPath string
@@ -133,12 +156,15 @@ func DefaultConfig() *Config {
 		},
 		Agent: AgentConfig{
 			MaxRetries:          3,
+			MaxIterations:       20,
 			VerificationEnabled: true,
 		},
 		Memory: MemoryConfig{
-			Enabled:    true,
-			ProjectDir: ".vecai/memory",
-			GlobalDir:  "~/.config/vecai/memory",
+			Enabled:         true,
+			ProjectDir:      ".vecai/memory",
+			GlobalDir:       "~/.config/vecai/memory",
+			StoreMaxEntries: 10000,
+			StoreMaxDiskMB:  10,
 		},
 		Tools: ToolsConfig{
 			Vecgrep: VecgrepToolConfig{
@@ -153,6 +179,10 @@ func DefaultConfig() *Config {
 			},
 			Gpeek: GpeekToolConfig{
 				Enabled: true,
+			},
+			Sandbox: SandboxConfig{
+				Enabled:  true,
+				AllowNet: false,
 			},
 		},
 		DefaultTier: TierFast,
@@ -179,6 +209,13 @@ func DefaultConfig() *Config {
 			MaxFileTokens:      2000,
 			AggressiveCompact:  true,
 			SmartToolSelection: true,
+		},
+		Parallel: ParallelConfig{
+			Enabled:        true,
+			MaxConcurrency: 4,
+		},
+		WebSearch: WebSearchConfig{
+			MinRequestDelay: 1 * time.Second,
 		},
 	}
 }

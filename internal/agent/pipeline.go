@@ -6,6 +6,7 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
+	vecerr "github.com/abdul-hamid-achik/vecai/internal/errors"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
@@ -105,6 +106,13 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 	maxRetries := p.config.Agent.MaxRetries
 
 	for !p.planner.IsPlanComplete(plan) {
+		select {
+		case <-ctx.Done():
+			result.Errors = append(result.Errors, fmt.Errorf("pipeline cancelled: %w", ctx.Err()))
+			return result, nil
+		default:
+		}
+
 		step := p.planner.GetNextStep(plan)
 		if step == nil {
 			result.Errors = append(result.Errors, fmt.Errorf("no executable steps found but plan not complete"))
@@ -121,6 +129,13 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 		var lastErr error
 
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			select {
+			case <-ctx.Done():
+				result.Errors = append(result.Errors, fmt.Errorf("pipeline cancelled during retry: %w", ctx.Err()))
+				return result, nil
+			default:
+			}
+
 			if attempt > 0 {
 				p.output.Info(fmt.Sprintf("Retrying step (attempt %d/%d)...", attempt+1, maxRetries))
 			}
@@ -144,7 +159,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 				previousContext += fmt.Sprintf("\n--- Step %s completed ---\n%s\n", step.ID, execResult.Output)
 			} else {
 				debug.StepComplete(step.ID, false, lastErr)
-				result.Errors = append(result.Errors, fmt.Errorf("step %s failed: %v", step.ID, lastErr))
+				result.Errors = append(result.Errors, vecerr.PipelineStepFailed(step.ID, lastErr))
 				// Continue to next step or break based on error severity
 				if lastErr != nil {
 					break
@@ -155,6 +170,13 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 
 	// Step 3: Verify if enabled
 	if p.config.Agent.VerificationEnabled && len(result.Executions) > 0 {
+		select {
+		case <-ctx.Done():
+			result.Errors = append(result.Errors, fmt.Errorf("pipeline cancelled before verification: %w", ctx.Err()))
+			return result, nil
+		default:
+		}
+
 		p.output.Info("Verifying changes...")
 		changedFiles := p.extractChangedFiles(result.Executions)
 		verification, err := p.verifier.VerifyChanges(ctx, result.Executions[len(result.Executions)-1], changedFiles)

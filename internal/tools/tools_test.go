@@ -9,15 +9,16 @@ import (
 )
 
 // chdirTemp changes to the given directory for the duration of the test,
-// restoring the original working directory on cleanup. This is needed because
-// the file tools validate that paths are within the project directory (cwd).
+// restoring the original working directory and projectRoot on cleanup.
+// This is needed because the file tools validate that paths are within
+// the project directory (projectRoot).
 func chdirTemp(t *testing.T, dir string) {
 	t.Helper()
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Resolve symlinks so that validatePathWithinProject works correctly
+	// Resolve symlinks so that ValidatePath works correctly
 	// on macOS where /var -> /private/var
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -26,7 +27,13 @@ func chdirTemp(t *testing.T, dir string) {
 	if err := os.Chdir(resolved); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
+	// Set projectRoot to the resolved temp dir so ValidatePath accepts paths here
+	origRoot := projectRoot
+	projectRoot = resolved
+	t.Cleanup(func() {
+		_ = os.Chdir(orig)
+		projectRoot = origRoot
+	})
 }
 
 func TestRegistry(t *testing.T) {

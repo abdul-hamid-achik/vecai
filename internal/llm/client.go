@@ -8,8 +8,10 @@ import (
 
 // Message represents a conversation message
 type Message struct {
-	Role    string
-	Content string
+	Role       string
+	Content    string
+	ToolCallID string     // For tool result messages (role="tool")
+	ToolCalls  []ToolCall // For assistant messages with tool calls
 }
 
 // ToolCall represents a tool call from the LLM
@@ -56,6 +58,7 @@ type LLMClient interface {
 	SetModel(model string)
 	SetTier(tier config.ModelTier)
 	GetModel() string
+	Close() error
 }
 
 // Client is an alias for OllamaClient for backward compatibility

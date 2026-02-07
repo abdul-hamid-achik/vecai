@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/agent"
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -62,6 +66,11 @@ func main() {
 			logging.F("debug_mode", debugMode),
 			logging.F("verbose_mode", verboseMode),
 		)
+	}
+
+	// Initialize secure project root for file path validation
+	if err := tools.InitProjectRoot(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to init project root: %v\n", err)
 	}
 
 	if err := run(); err != nil {
@@ -178,8 +187,20 @@ func run() error {
 	output := ui.NewOutputHandler()
 	input := ui.NewInputHandler()
 
-	// Create Ollama client
-	llmClient := llm.NewClient(cfg)
+	// Create Ollama client with resilience wrapper (retry + circuit breaker)
+	rawClient := llm.NewClient(cfg)
+	llmClient := llm.NewResilientClient(rawClient, cfg.RateLimit)
+
+	// Health check for Ollama connectivity
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if version, err := rawClient.CheckHealthWithVersion(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Ollama is not running. Start with: ollama serve\n")
+		} else {
+			logDebug("Ollama connected: version %s", version)
+		}
+	}
 
 	// Select registry based on mode
 	var registry *tools.Registry
@@ -209,6 +230,18 @@ func run() error {
 		if err := a.Close(); err != nil {
 			logDebug("error closing agent: %v", err)
 		}
+	}()
+
+	// Set up signal handling for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		logDebug("received signal %v, shutting down gracefully...", sig)
+		if err := a.Close(); err != nil {
+			logDebug("error during signal shutdown: %v", err)
+		}
+		os.Exit(0)
 	}()
 
 	// Handle models subcommand

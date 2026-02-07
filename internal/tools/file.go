@@ -11,36 +11,9 @@ import (
 // validatePathWithinProject checks that the resolved absolute path is within
 // the current working directory (project root). This prevents path traversal
 // attacks where the LLM could read/write files outside the project.
+// Deprecated: Use ValidatePath() or ValidatePathForWrite() from file_security.go instead.
 func validatePathWithinProject(absPath string) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	// Resolve symlinks to prevent symlink-based traversal
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		// If the file doesn't exist yet (write_file), check the parent dir
-		parentDir := filepath.Dir(absPath)
-		resolvedParent, err2 := filepath.EvalSymlinks(parentDir)
-		if err2 != nil {
-			// Parent doesn't exist either, check raw path
-			resolvedPath = absPath
-		} else {
-			resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
-		}
-	}
-
-	resolvedWd, err := filepath.EvalSymlinks(wd)
-	if err != nil {
-		resolvedWd = wd
-	}
-
-	// Ensure the path is within the project directory
-	if !strings.HasPrefix(resolvedPath, resolvedWd+string(filepath.Separator)) && resolvedPath != resolvedWd {
-		return fmt.Errorf("access denied: path %q is outside the project directory", absPath)
-	}
-	return nil
+	return ValidatePath(absPath)
 }
 
 // ReadFileTool reads file contents
@@ -107,12 +80,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	}
 
 	// Validate path is within project directory
-	if err := validatePathWithinProject(absPath); err != nil {
+	if err := ValidatePath(absPath); err != nil {
 		return "", err
 	}
 
-	// Check if file exists
-	info, err := os.Stat(absPath)
+	// Use Lstat to detect symlinks before reading
+	info, err := os.Lstat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("file not found: %s", path)
@@ -280,8 +253,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
-	// Validate path is within project directory
-	if err := validatePathWithinProject(absPath); err != nil {
+	// Validate path is within project directory (with symlink write protection)
+	if err := ValidatePathForWrite(absPath); err != nil {
 		return "", err
 	}
 
@@ -291,8 +264,21 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", fmt.Errorf("failed to create directories: %w", err)
 	}
 
-	// Write file
-	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+	// Write file using openNoFollow to prevent symlink race attacks
+	f, err := openNoFollow(absPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		// Fallback for new files where O_NOFOLLOW may fail on some systems
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			if writeErr := os.WriteFile(absPath, []byte(content), 0644); writeErr != nil {
+				return "", fmt.Errorf("failed to write file: %w", writeErr)
+			}
+			return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path), nil
+		}
+		return "", fmt.Errorf("failed to open file for writing: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(content); err != nil {
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -357,12 +343,19 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (strin
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
-	// Validate path is within project directory
-	if err := validatePathWithinProject(absPath); err != nil {
+	// Validate path is within project directory (with symlink write protection)
+	if err := ValidatePathForWrite(absPath); err != nil {
 		return "", err
 	}
 
-	// Read current content
+	// Read current content (use Lstat first to check for symlinks)
+	info, err := os.Lstat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("access denied: refusing to edit through symlink %q", path)
+	}
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)

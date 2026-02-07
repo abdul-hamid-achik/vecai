@@ -13,6 +13,7 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
+	vecerr "github.com/abdul-hamid-achik/vecai/internal/errors"
 	"github.com/abdul-hamid-achik/vecai/internal/logging"
 )
 
@@ -33,9 +34,10 @@ type OllamaClient struct {
 
 // OllamaMessage represents a message in Ollama's format
 type OllamaMessage struct {
-	Role      string           `json:"role"`
-	Content   string           `json:"content"`
-	ToolCalls []OllamaToolCall `json:"tool_calls,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	ToolCalls  []OllamaToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 // OllamaToolCall represents a tool call in Ollama's format (OpenAI-compatible)
@@ -125,6 +127,34 @@ func (c *OllamaClient) GetModel() string {
 	return c.model
 }
 
+// Close cleans up the OllamaClient, closing idle HTTP connections.
+func (c *OllamaClient) Close() error {
+	c.httpClient.CloseIdleConnections()
+	return nil
+}
+
+// CheckHealthWithVersion verifies Ollama is running and returns the version string
+func (c *OllamaClient) CheckHealthWithVersion(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/version", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", ErrOllamaUnavailable
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to parse version response: %w", err)
+	}
+	return result.Version, nil
+}
+
 // CheckHealth verifies Ollama is running
 func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/version", nil)
@@ -134,12 +164,12 @@ func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return ErrOllamaUnavailable
+		return vecerr.LLMUnavailable(ErrOllamaUnavailable)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return ErrOllamaUnavailable
+		return vecerr.LLMUnavailable(ErrOllamaUnavailable)
 	}
 
 	return nil
@@ -220,36 +250,36 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ollama request failed: %w", err)
+		return nil, vecerr.LLMRequestFailed(fmt.Errorf("ollama request failed: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, vecerr.LLMRequestFailed(fmt.Errorf("failed to read response: %w", err))
 	}
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)
+			return nil, vecerr.LLMModelNotFound(currentModel)
 		}
-		return nil, fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, vecerr.LLMRequestFailed(fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(respBody)))
 	}
 
 	// Parse response
 	var ollamaResp OllamaChatResponse
 	if err := json.Unmarshal(respBody, &ollamaResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, vecerr.LLMRequestFailed(fmt.Errorf("failed to parse response: %w", err))
 	}
 
 	if ollamaResp.Error != "" {
 		var err error
 		if ollamaResp.Error == "model not found" {
-			err = fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)
+			err = vecerr.LLMModelNotFound(currentModel)
 		} else {
-			err = fmt.Errorf("ollama error: %s", ollamaResp.Error)
+			err = vecerr.LLMRequestFailed(fmt.Errorf("ollama error: %s", ollamaResp.Error))
 		}
 		debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
 		return nil, err
@@ -345,7 +375,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 			if errors.Is(err, context.Canceled) {
 				return // Clean exit on cancellation
 			}
-			ch <- StreamChunk{Type: "error", Error: fmt.Errorf("ollama request failed: %w", err)}
+			ch <- StreamChunk{Type: "error", Error: vecerr.LLMRequestFailed(fmt.Errorf("ollama request failed: %w", err))}
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
@@ -354,9 +384,9 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode == http.StatusNotFound {
-				ch <- StreamChunk{Type: "error", Error: fmt.Errorf("%w: %s", ErrModelNotFound, currentModel)}
+				ch <- StreamChunk{Type: "error", Error: vecerr.LLMModelNotFound(currentModel)}
 			} else {
-				ch <- StreamChunk{Type: "error", Error: fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(body))}
+				ch <- StreamChunk{Type: "error", Error: vecerr.LLMRequestFailed(fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(body)))}
 			}
 			return
 		}
@@ -403,9 +433,9 @@ func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch c
 		if chunk.Error != "" {
 			var err error
 			if chunk.Error == "model not found" {
-				err = fmt.Errorf("%w: %s", ErrModelNotFound, c.model)
+				err = vecerr.LLMModelNotFound(c.model)
 			} else {
-				err = fmt.Errorf("ollama error: %s", chunk.Error)
+				err = vecerr.LLMRequestFailed(fmt.Errorf("ollama error: %s", chunk.Error))
 			}
 			debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
 			ch <- StreamChunk{Type: "error", Error: err}
@@ -467,10 +497,28 @@ func (c *OllamaClient) buildMessages(messages []Message, systemPrompt string) []
 
 	// Convert messages
 	for _, msg := range messages {
-		ollamaMessages = append(ollamaMessages, OllamaMessage{
+		om := OllamaMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
-		})
+		}
+		// Set ToolCallID for tool result messages
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			om.ToolCallID = msg.ToolCallID
+		}
+		// Convert ToolCalls for assistant messages
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				args, _ := json.Marshal(tc.Input)
+				otc := OllamaToolCall{
+					ID:   tc.ID,
+					Type: "function",
+				}
+				otc.Function.Name = tc.Name
+				otc.Function.Arguments = args
+				om.ToolCalls = append(om.ToolCalls, otc)
+			}
+		}
+		ollamaMessages = append(ollamaMessages, om)
 	}
 
 	return ollamaMessages

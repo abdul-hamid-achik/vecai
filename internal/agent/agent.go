@@ -15,6 +15,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	ctxmgr "github.com/abdul-hamid-achik/vecai/internal/context"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
+	vecerr "github.com/abdul-hamid-achik/vecai/internal/errors"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/logging"
 	"github.com/abdul-hamid-achik/vecai/internal/memory"
@@ -138,6 +139,10 @@ type Agent struct {
 	// Architect mode state
 	architectMode    bool             // Whether in architect mode
 	previousPermMode permissions.Mode // To restore after exiting architect mode
+
+	// Graceful shutdown
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // New creates a new agent
@@ -204,6 +209,9 @@ func New(cfg Config) *Agent {
 		resultCache = ctxmgr.NewToolResultCache(ctxmgr.DefaultCacheTTL)
 	}
 
+	// Create shutdown context for graceful cleanup
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
 	a := &Agent{
 		llm:                 cfg.LLM,
 		tools:               cfg.Tools,
@@ -223,6 +231,8 @@ func New(cfg Config) *Agent {
 		autoTier:            cfg.AutoTier,
 		captureMode:         cfg.CaptureMode,
 		projectInstructions: loadProjectInstructions(),
+		shutdownCtx:         shutdownCtx,
+		shutdownCancel:      shutdownCancel,
 	}
 	a.planner = NewPlanner(a)
 
@@ -595,7 +605,10 @@ var ErrInterrupted = errors.New("interrupted by user")
 
 // runLoopTUI executes the agent loop with TUI output
 func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
-	const maxIterations = 20
+	maxIterations := a.config.Agent.MaxIterations
+	if maxIterations == 0 {
+		maxIterations = 20
+	}
 	loopStartTime := time.Now()
 	interruptChan := adapter.GetInterruptChan()
 
@@ -700,11 +713,12 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		response.Content = textContent.String()
 		response.ToolCalls = toolCalls
 
-		// Add assistant message
-		if response.Content != "" {
+		// Add assistant message with tool calls
+		if response.Content != "" || len(response.ToolCalls) > 0 {
 			a.contextMgr.AddMessage(llm.Message{
-				Role:    "assistant",
-				Content: response.Content,
+				Role:      "assistant",
+				Content:   response.Content,
+				ToolCalls: response.ToolCalls,
 			})
 		}
 
@@ -719,19 +733,17 @@ func (a *Agent) runLoopTUI(ctx context.Context, adapter *tui.TUIAdapter) error {
 		// Execute tool calls
 		toolResults := a.executeToolCallsTUI(runCtx, response.ToolCalls, adapter)
 
-		// Add tool results as user message
-		var resultContent strings.Builder
+		// Add individual tool result messages
 		for _, result := range toolResults {
-			resultContent.WriteString(fmt.Sprintf("Tool %s result:\n%s\n\n", result.Name, result.Result))
+			a.contextMgr.AddMessage(llm.Message{
+				Role:       "tool",
+				Content:    result.Result,
+				ToolCallID: result.ToolCallID,
+			})
 		}
-
-		a.contextMgr.AddMessage(llm.Message{
-			Role:    "user",
-			Content: resultContent.String(),
-		})
 	}
 
-	return fmt.Errorf("max iterations reached")
+	return vecerr.MaxIterationsReached(maxIterations)
 }
 
 // updateContextStatsTUI updates context stats and handles auto-compact/warnings
@@ -815,6 +827,7 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 	var results []toolResult
 
 	for _, call := range calls {
+		callID := call.ID // capture for toolResult
 		// Log tool call to debug tracer
 		debug.ToolCall(call.Name, call.Input)
 
@@ -822,9 +835,10 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		if !ok {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Unknown tool: %s", call.Name),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Unknown tool: %s", call.Name),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			continue
 		}
@@ -837,9 +851,10 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		if err != nil {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Permission error: %s", err),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Permission error: %s", err),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			adapter.ToolResult(call.Name, "Permission error: "+err.Error(), true)
 			continue
@@ -848,9 +863,10 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		if !allowed {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: "Permission denied by user",
-				Error:  true,
+				Name:       call.Name,
+				Result:     "Permission denied by user",
+				Error:      true,
+				ToolCallID: callID,
 			})
 			adapter.ToolResult(call.Name, "Permission denied", true)
 			continue
@@ -864,9 +880,10 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 		if err != nil {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Error: %s", err),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Error: %s", err),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			adapter.ToolResult(call.Name, err.Error(), true)
 		} else {
@@ -878,9 +895,10 @@ func (a *Agent) executeToolCallsTUI(ctx context.Context, calls []llm.ToolCall, a
 				contextResult = summary // Use summary for LLM context
 			}
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: contextResult,
-				Error:  false,
+				Name:       call.Name,
+				Result:     contextResult,
+				Error:      false,
+				ToolCallID: callID,
 			})
 			adapter.ToolResult(call.Name, result, false) // Show full result to user
 		}
@@ -929,10 +947,10 @@ func (a *Agent) checkPermissionTUI(toolName string, level tools.PermissionLevel,
 	case "n", "no":
 		return false, nil
 	case "a", "always":
-		// Note: We can't directly modify the policy cache from here
-		// The permission check will handle caching on next call
+		a.permissions.CacheDecision(toolName, permissions.DecisionAlwaysAllow)
 		return true, nil
 	case "v", "never":
+		a.permissions.CacheDecision(toolName, permissions.DecisionNeverAllow)
 		return false, nil
 	default:
 		return false, nil
@@ -1717,7 +1735,10 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 
 // runLoop executes the agent loop until completion
 func (a *Agent) runLoop(ctx context.Context) error {
-	const maxIterations = 20
+	maxIterations := a.config.Agent.MaxIterations
+	if maxIterations == 0 {
+		maxIterations = 20
+	}
 
 	for i := 0; i < maxIterations; i++ {
 		// Get tool definitions
@@ -1758,11 +1779,12 @@ func (a *Agent) runLoop(ctx context.Context) error {
 		response.Content = textContent.String()
 		response.ToolCalls = toolCalls
 
-		// Add assistant message
-		if response.Content != "" {
+		// Add assistant message with tool calls
+		if response.Content != "" || len(response.ToolCalls) > 0 {
 			a.contextMgr.AddMessage(llm.Message{
-				Role:    "assistant",
-				Content: response.Content,
+				Role:      "assistant",
+				Content:   response.Content,
+				ToolCalls: response.ToolCalls,
 			})
 		}
 
@@ -1777,19 +1799,17 @@ func (a *Agent) runLoop(ctx context.Context) error {
 		// Execute tool calls
 		toolResults := a.executeToolCalls(ctx, response.ToolCalls)
 
-		// Add tool results as user message
-		var resultContent strings.Builder
+		// Add individual tool result messages
 		for _, result := range toolResults {
-			resultContent.WriteString(fmt.Sprintf("Tool %s result:\n%s\n\n", result.Name, result.Result))
+			a.contextMgr.AddMessage(llm.Message{
+				Role:       "tool",
+				Content:    result.Result,
+				ToolCallID: result.ToolCallID,
+			})
 		}
-
-		a.contextMgr.AddMessage(llm.Message{
-			Role:    "user",
-			Content: resultContent.String(),
-		})
 	}
 
-	return fmt.Errorf("max iterations reached")
+	return vecerr.MaxIterationsReached(maxIterations)
 }
 
 // checkContextUsage checks context usage and handles warnings/auto-compact for non-TUI mode
@@ -1816,9 +1836,10 @@ func (a *Agent) checkContextUsage(ctx context.Context) {
 }
 
 type toolResult struct {
-	Name   string
-	Result string
-	Error  bool
+	Name       string
+	Result     string
+	Error      bool
+	ToolCallID string
 }
 
 // executeToolCalls executes tool calls with permission checking
@@ -1826,6 +1847,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 	var results []toolResult
 
 	for _, call := range calls {
+		callID := call.ID // capture for toolResult
 		// Log tool call to debug tracer
 		debug.ToolCall(call.Name, call.Input)
 
@@ -1833,9 +1855,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		if !ok {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Unknown tool: %s", call.Name),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Unknown tool: %s", call.Name),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			continue
 		}
@@ -1849,9 +1872,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		if err != nil {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Permission error: %s", err),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Permission error: %s", err),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			a.output.ToolResult(call.Name, "Permission error: "+err.Error(), true)
 			continue
@@ -1860,9 +1884,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		if !allowed {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: "Permission denied by user",
-				Error:  true,
+				Name:       call.Name,
+				Result:     "Permission denied by user",
+				Error:      true,
+				ToolCallID: callID,
 			})
 			a.output.ToolResult(call.Name, "Permission denied", true)
 			continue
@@ -1873,9 +1898,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 		if err != nil {
 			debug.ToolResult(call.Name, false, 0)
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: fmt.Sprintf("Error: %s", err),
-				Error:  true,
+				Name:       call.Name,
+				Result:     fmt.Sprintf("Error: %s", err),
+				Error:      true,
+				ToolCallID: callID,
 			})
 			a.output.ToolResult(call.Name, err.Error(), true)
 		} else {
@@ -1887,9 +1913,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall) []to
 				contextResult = summary // Use summary for LLM context
 			}
 			results = append(results, toolResult{
-				Name:   call.Name,
-				Result: contextResult,
-				Error:  false,
+				Name:       call.Name,
+				Result:     contextResult,
+				Error:      false,
+				ToolCallID: callID,
 			})
 			a.output.ToolResult(call.Name, result, false) // Show full result to user
 		}
@@ -2158,11 +2185,48 @@ func (a *Agent) GetHistory() []llm.Message {
 	return a.contextMgr.GetMessages()
 }
 
-// Close cleans up agent resources
+// Close cleans up agent resources gracefully.
 func (a *Agent) Close() error {
-	if a.memoryLayer != nil {
-		return a.memoryLayer.Close()
+	// Signal all goroutines to stop
+	if a.shutdownCancel != nil {
+		a.shutdownCancel()
 	}
+
+	// Save session if available
+	if a.sessionMgr != nil {
+		msgs := a.contextMgr.GetMessages()
+		if len(msgs) > 0 {
+			if err := a.sessionMgr.Save(msgs, a.llm.GetModel()); err != nil {
+				if log := logging.Global(); log != nil {
+					log.Warn("failed to save session during shutdown", logging.Error(err))
+				}
+			}
+		}
+	}
+
+	// Close memory layer
+	if a.memoryLayer != nil {
+		if err := a.memoryLayer.Close(); err != nil {
+			if log := logging.Global(); log != nil {
+				log.Warn("failed to close memory layer", logging.Error(err))
+			}
+		}
+	}
+
+	// Close LLM client
+	if a.llm != nil {
+		if err := a.llm.Close(); err != nil {
+			if log := logging.Global(); log != nil {
+				log.Warn("failed to close LLM client", logging.Error(err))
+			}
+		}
+	}
+
+	// Flush logs
+	if log := logging.Global(); log != nil {
+		log.Debug("agent shutdown complete")
+	}
+
 	return nil
 }
 

@@ -52,76 +52,87 @@ func (r *TaskRouter) ClassifyIntent(ctx context.Context, query string) Intent {
 	return intent
 }
 
-// classifyByKeywords uses simple pattern matching for common cases
+// keywordScore pairs a keyword with a weight for intent classification
+type keywordScore struct {
+	keyword string
+	weight  float64
+}
+
+// intentKeywords maps each intent to weighted keywords for scoring
+var intentKeywords = map[Intent][]keywordScore{
+	IntentPlan: {
+		{"implement", 2.0}, {"create", 1.5}, {"build", 1.5}, {"develop", 1.5}, {"design", 2.0},
+		{"refactor", 2.0}, {"restructure", 2.0}, {"migrate", 2.0}, {"convert", 1.5},
+		{"feature", 1.5}, {"system", 1.0}, {"architecture", 2.0},
+	},
+	IntentCode: {
+		{"write", 2.0}, {"add", 1.5}, {"modify", 1.5}, {"change", 1.5}, {"update", 1.5},
+		{"function", 1.0}, {"method", 1.0}, {"class", 1.0}, {"struct", 1.0}, {"type", 0.5},
+		{"fix bug", 2.0}, {"fix the", 1.5}, {"patch", 1.5},
+	},
+	IntentReview: {
+		{"review", 2.0}, {"audit", 2.0}, {"check", 1.0}, {"analyze code", 2.0},
+		{"code quality", 2.0}, {"best practices", 1.5}, {"security", 1.5},
+		{"performance", 1.5}, {"optimize", 1.5},
+	},
+	IntentDebug: {
+		{"debug", 2.0}, {"why", 1.0}, {"not working", 2.0}, {"error", 1.5}, {"crash", 2.0},
+		{"failing", 1.5}, {"broken", 1.5}, {"issue", 1.0}, {"problem", 1.0},
+		{"doesn't work", 2.0}, {"doesn't compile", 2.0},
+	},
+	IntentQuestion: {
+		{"what is", 1.5}, {"what does", 1.5}, {"how does", 1.5}, {"where is", 1.5},
+		{"explain", 2.0}, {"describe", 1.5}, {"show me", 1.0}, {"find", 1.0},
+		{"understand", 1.5}, {"documentation", 1.5}, {"help me understand", 2.0},
+		{"?", 1.0},
+	},
+}
+
+// classifyByKeywords uses weighted keyword scoring for intent classification
 func (r *TaskRouter) classifyByKeywords(query string) Intent {
 	lower := strings.ToLower(query)
+	const scoreThreshold = 2.0
 
-	// Plan indicators (complex multi-step tasks)
-	planKeywords := []string{
-		"implement", "create", "build", "develop", "design",
-		"refactor", "restructure", "migrate", "convert",
-		"feature", "system", "architecture",
-	}
-	for _, kw := range planKeywords {
-		if strings.Contains(lower, kw) && len(query) > 50 {
-			return IntentPlan
-		}
-	}
-
-	// Code writing indicators
-	codeKeywords := []string{
-		"write", "add", "modify", "change", "update",
-		"function", "method", "class", "struct", "type",
-		"fix bug", "fix the", "patch",
-	}
-	for _, kw := range codeKeywords {
-		if strings.Contains(lower, kw) {
-			// If it's a simple single-file change, use code
-			if !containsMultipleFileIndicators(lower) {
-				return IntentCode
+	// Score each intent
+	scores := make(map[Intent]float64)
+	for intent, keywords := range intentKeywords {
+		var total float64
+		for _, ks := range keywords {
+			if strings.Contains(lower, ks.keyword) {
+				total += ks.weight
 			}
-			return IntentPlan
+		}
+		scores[intent] = total
+	}
+
+	// Add complexity bonus to IntentPlan for longer queries (word count > 10)
+	wordCount := len(strings.Fields(query))
+	if wordCount > 10 {
+		scores[IntentPlan] += 1.5
+	}
+
+	// For code intent with multi-file indicators, shift score to plan
+	if scores[IntentCode] > 0 && containsMultipleFileIndicators(lower) {
+		scores[IntentPlan] += scores[IntentCode]
+		scores[IntentCode] = 0
+	}
+
+	// Find the highest scoring intent
+	var bestIntent Intent
+	var bestScore float64
+	for intent, score := range scores {
+		if score > bestScore {
+			bestScore = score
+			bestIntent = intent
 		}
 	}
 
-	// Review indicators
-	reviewKeywords := []string{
-		"review", "audit", "check", "analyze code",
-		"code quality", "best practices", "security",
-		"performance", "optimize",
-	}
-	for _, kw := range reviewKeywords {
-		if strings.Contains(lower, kw) {
-			return IntentReview
-		}
+	// Only return if score exceeds threshold
+	if bestScore >= scoreThreshold {
+		return bestIntent
 	}
 
-	// Debug indicators
-	debugKeywords := []string{
-		"debug", "why", "not working", "error", "crash",
-		"failing", "broken", "issue", "problem",
-		"doesn't work", "doesn't compile",
-	}
-	for _, kw := range debugKeywords {
-		if strings.Contains(lower, kw) {
-			return IntentDebug
-		}
-	}
-
-	// Question indicators
-	questionKeywords := []string{
-		"what is", "what does", "how does", "where is",
-		"explain", "describe", "show me", "find",
-		"understand", "documentation", "help me understand",
-		"?",
-	}
-	for _, kw := range questionKeywords {
-		if strings.Contains(lower, kw) {
-			return IntentQuestion
-		}
-	}
-
-	return "" // Ambiguous, needs LLM classification
+	return "" // Falls through to LLM classification
 }
 
 // containsMultipleFileIndicators checks if query suggests multi-file changes

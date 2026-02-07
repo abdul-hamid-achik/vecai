@@ -70,7 +70,11 @@ func NewRegistry(cfg *config.ToolsConfig) *Registry {
 	r.Register(&WriteFileTool{})
 	r.Register(&EditFileTool{})
 	r.Register(&ListFilesTool{})
-	r.Register(&BashTool{})
+	cwd, _ := os.Getwd()
+	r.Register(&BashTool{
+		Sandbox:    DetectSandbox(),
+		ProjectDir: cwd,
+	})
 	r.Register(&GrepTool{})
 
 	// Smart tools for Go development (always enabled)

@@ -9,12 +9,16 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 // WebSearchTool performs web searches using the Tavily API
 type WebSearchTool struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	lastRequest time.Time
+	minDelay    time.Duration
+	mu          sync.Mutex
 }
 
 // NewWebSearchTool creates a new WebSearchTool with configured HTTP client
@@ -23,7 +27,32 @@ func NewWebSearchTool() *WebSearchTool {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		minDelay: 1 * time.Second,
 	}
+}
+
+// NewWebSearchToolWithDelay creates a new WebSearchTool with a custom minimum request delay
+func NewWebSearchToolWithDelay(minDelay time.Duration) *WebSearchTool {
+	return &WebSearchTool{
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		minDelay: minDelay,
+	}
+}
+
+// waitForRateLimit enforces minimum delay between API requests
+func (t *WebSearchTool) waitForRateLimit() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if !t.lastRequest.IsZero() {
+		elapsed := time.Since(t.lastRequest)
+		if elapsed < t.minDelay {
+			time.Sleep(t.minDelay - elapsed)
+		}
+	}
+	t.lastRequest = time.Now()
 }
 
 func (t *WebSearchTool) Name() string {
@@ -153,6 +182,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]any) (stri
 			}
 		}
 	}
+
+	// Wait for rate limit before making API request
+	t.waitForRateLimit()
 
 	// Make API request
 	result, err := t.callTavilyAPI(ctx, req)
