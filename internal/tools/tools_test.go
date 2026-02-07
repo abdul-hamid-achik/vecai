@@ -17,7 +17,13 @@ func chdirTemp(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(dir); err != nil {
+	// Resolve symlinks so that validatePathWithinProject works correctly
+	// on macOS where /var -> /private/var
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(resolved); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(orig) })
@@ -198,12 +204,12 @@ func TestWriteFileTool(t *testing.T) {
 	// Create temp directory and chdir into it for path validation
 	dir := t.TempDir()
 	chdirTemp(t, dir)
-	testFile := filepath.Join(dir, "subdir", "test.txt")
+	relFile := filepath.Join("subdir", "test.txt")
 	content := "test content"
 
 	// Test writing file (creates directories)
 	result, err := tool.Execute(context.Background(), map[string]any{
-		"path":    testFile,
+		"path":    relFile,
 		"content": content,
 	})
 	if err != nil {
@@ -214,7 +220,7 @@ func TestWriteFileTool(t *testing.T) {
 	}
 
 	// Verify file was created
-	data, err := os.ReadFile(testFile)
+	data, err := os.ReadFile(relFile)
 	if err != nil {
 		t.Fatalf("failed to read written file: %v", err)
 	}
