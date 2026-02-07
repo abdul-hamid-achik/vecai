@@ -158,6 +158,14 @@ func NewAnalysisRegistry(cfg *config.ToolsConfig) *Registry {
 	return r
 }
 
+// NewEmptyRegistry creates a Registry with no tools registered.
+// Useful for tests that need to register only specific mock tools.
+func NewEmptyRegistry() *Registry {
+	return &Registry{
+		tools: make(map[string]Tool),
+	}
+}
+
 // Register adds a tool to the registry
 func (r *Registry) Register(tool Tool) {
 	r.mu.Lock()
