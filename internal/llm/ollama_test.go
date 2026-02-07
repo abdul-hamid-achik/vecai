@@ -1,11 +1,14 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 )
@@ -487,5 +490,171 @@ func TestClose(t *testing.T) {
 	c := newTestClient("")
 	if err := c.Close(); err != nil {
 		t.Errorf("expected no error from Close, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Chat request keep_alive field
+// ---------------------------------------------------------------------------
+
+func TestChatRequestIncludesKeepAlive(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(OllamaChatResponse{
+			Message:    OllamaMessage{Role: "assistant", Content: "hi"},
+			Done:       true,
+			DoneReason: "stop",
+		})
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = srv.URL
+	cfg.Ollama.KeepAlive = "30m"
+	c := NewOllamaClient(cfg)
+
+	_, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var req OllamaChatRequest
+	if err := json.Unmarshal(captured, &req); err != nil {
+		t.Fatalf("failed to unmarshal captured request: %v", err)
+	}
+	if req.KeepAlive != "30m" {
+		t.Errorf("expected keep_alive \"30m\", got %q", req.KeepAlive)
+	}
+}
+
+func TestChatRequestOmitsEmptyKeepAlive(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(OllamaChatResponse{
+			Message:    OllamaMessage{Role: "assistant", Content: "hi"},
+			Done:       true,
+			DoneReason: "stop",
+		})
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = srv.URL
+	cfg.Ollama.KeepAlive = ""
+	c := NewOllamaClient(cfg)
+
+	_, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The raw JSON should not contain the keep_alive key at all (omitempty)
+	if bytes.Contains(captured, []byte(`"keep_alive"`)) {
+		t.Error("expected keep_alive to be omitted from request when empty, but it was present")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WarmModel
+// ---------------------------------------------------------------------------
+
+func TestWarmModel_Success(t *testing.T) {
+	var capturedPath string
+	var capturedMethod string
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(OllamaChatResponse{
+			Message:    OllamaMessage{Role: "assistant", Content: ""},
+			Done:       true,
+			DoneReason: "stop",
+		})
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = srv.URL
+	cfg.Ollama.KeepAlive = "15m"
+	c := NewOllamaClient(cfg)
+
+	err := c.WarmModel(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if capturedMethod != "POST" {
+		t.Errorf("expected POST, got %s", capturedMethod)
+	}
+	if capturedPath != "/api/chat" {
+		t.Errorf("expected /api/chat, got %s", capturedPath)
+	}
+
+	var req OllamaChatRequest
+	if err := json.Unmarshal(capturedBody, &req); err != nil {
+		t.Fatalf("failed to unmarshal request body: %v", err)
+	}
+	if len(req.Messages) != 0 {
+		t.Errorf("expected empty messages array, got %d messages", len(req.Messages))
+	}
+	if req.KeepAlive != "15m" {
+		t.Errorf("expected keep_alive \"15m\", got %q", req.KeepAlive)
+	}
+}
+
+func TestWarmModel_OllamaUnavailable(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = "http://127.0.0.1:1" // nothing listening
+	c := NewOllamaClient(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := c.WarmModel(ctx)
+	if err == nil {
+		t.Fatal("expected error for unavailable server, got nil")
+	}
+}
+
+func TestWarmModel_ModelNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = srv.URL
+	c := NewOllamaClient(cfg)
+
+	err := c.WarmModel(context.Background())
+	if err == nil {
+		t.Fatal("expected error for model not found, got nil")
+	}
+}
+
+func TestWarmModel_RespectsContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Delay long enough that a cancelled context should win
+		time.Sleep(5 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Ollama.BaseURL = srv.URL
+	c := NewOllamaClient(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := c.WarmModel(ctx)
+	if err == nil {
+		t.Fatal("expected error from cancelled context, got nil")
 	}
 }

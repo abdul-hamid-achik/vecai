@@ -191,7 +191,7 @@ func run() error {
 	rawClient := llm.NewClient(cfg)
 	llmClient := llm.NewResilientClient(rawClient, cfg.RateLimit)
 
-	// Health check for Ollama connectivity
+	// Health check for Ollama connectivity and model warming
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -199,6 +199,19 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "Warning: Ollama is not running. Start with: ollama serve\n")
 		} else {
 			logDebug("Ollama connected: version %s", version)
+			// Warm the model in the background so it's loaded by the time the user sends a query.
+			// This is especially useful with short OLLAMA_KEEP_ALIVE values (e.g. 2m via launchctl).
+			go func() {
+				warmCtx, warmCancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer warmCancel()
+				model := rawClient.GetModel()
+				logDebug("Warming model %s...", model)
+				if err := rawClient.WarmModel(warmCtx); err != nil {
+					logDebug("Model warm failed (non-fatal): %v", err)
+				} else {
+					logDebug("Model %s warmed and ready", model)
+				}
+			}()
 		}
 	}
 

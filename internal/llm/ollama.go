@@ -62,11 +62,12 @@ type OllamaTool struct {
 
 // OllamaChatRequest represents a chat request to Ollama
 type OllamaChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []OllamaMessage `json:"messages"`
-	Tools    []OllamaTool    `json:"tools,omitempty"`
-	Stream   bool            `json:"stream"`
-	Options  *OllamaOptions  `json:"options,omitempty"`
+	Model     string          `json:"model"`
+	Messages  []OllamaMessage `json:"messages"`
+	Tools     []OllamaTool    `json:"tools,omitempty"`
+	Stream    bool            `json:"stream"`
+	Options   *OllamaOptions  `json:"options,omitempty"`
+	KeepAlive string          `json:"keep_alive,omitempty"`
 }
 
 // OllamaOptions represents model options
@@ -210,10 +211,11 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	ollamaTools := c.buildTools(tools)
 
 	request := OllamaChatRequest{
-		Model:    currentModel,
-		Messages: ollamaMessages,
-		Tools:    ollamaTools,
-		Stream:   false,
+		Model:     currentModel,
+		Messages:  ollamaMessages,
+		Tools:     ollamaTools,
+		Stream:    false,
+		KeepAlive: c.config.Ollama.KeepAlive,
 		Options: &OllamaOptions{
 			Temperature: c.config.Temperature,
 			NumPredict:  c.config.MaxTokens,
@@ -332,10 +334,11 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		ollamaTools := c.buildTools(tools)
 
 		request := OllamaChatRequest{
-			Model:    currentModel,
-			Messages: ollamaMessages,
-			Tools:    ollamaTools,
-			Stream:   true,
+			Model:     currentModel,
+			Messages:  ollamaMessages,
+			Tools:     ollamaTools,
+			Stream:    true,
+			KeepAlive: c.config.Ollama.KeepAlive,
 			Options: &OllamaOptions{
 				Temperature: c.config.Temperature,
 				NumPredict:  c.config.MaxTokens,
@@ -586,4 +589,53 @@ func parseToolArguments(args json.RawMessage) (map[string]any, error) {
 	}
 
 	return nil, fmt.Errorf("failed to parse arguments: %s", string(args))
+}
+
+// WarmModel preloads the current model into memory by sending a no-op chat request.
+// This is useful when Ollama has unloaded the model due to keep_alive timeout.
+// The method uses /api/chat with an empty messages array which triggers model loading
+// without generating any tokens.
+func (c *OllamaClient) WarmModel(ctx context.Context) error {
+	currentModel := c.GetModel()
+
+	request := OllamaChatRequest{
+		Model:     currentModel,
+		Messages:  []OllamaMessage{},
+		Stream:    false,
+		KeepAlive: c.config.Ollama.KeepAlive,
+	}
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal warm request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create warm request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return vecerr.LLMUnavailable(fmt.Errorf("model warm failed: %w", err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return vecerr.LLMModelNotFound(currentModel)
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return vecerr.LLMRequestFailed(fmt.Errorf("model warm returned status %d: %s", resp.StatusCode, string(respBody)))
+	}
+
+	// Drain response body
+	_, _ = io.ReadAll(resp.Body)
+
+	if log := logging.Global(); log != nil {
+		log.Debug("model warmed successfully", logging.Model(currentModel))
+	}
+
+	return nil
 }
