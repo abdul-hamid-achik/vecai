@@ -1215,9 +1215,9 @@ func (a *Agent) handleSlashCommandTUI(cmd string, runner *tui.TUIRunner) bool {
 			// Enter architect mode
 			a.architectMode = true
 			a.previousPermMode = a.permissions.GetMode()
-			a.permissions.SetMode(permissions.ModeAuto) // Bypass permissions
+			a.permissions.SetMode(permissions.ModeAsk) // Auto-approve reads; still prompt for writes/execute
 			runner.GetModel().SetArchitectMode(true)
-			runner.SendSuccess("Entered architect mode (permissions bypassed)")
+			runner.SendSuccess("Entered architect mode (reads auto-approved, writes/execute still prompt)")
 			runner.SendInfo("Use Shift+Tab to toggle between Plan and Chat modes")
 			runner.SendInfo("  Plan mode: Design and explore the codebase")
 			runner.SendInfo("  Chat mode: Ask questions and discuss")
@@ -1536,8 +1536,8 @@ func (a *Agent) handleSlashCommand(cmd string) (shouldContinue bool) {
 			// Enter architect mode
 			a.architectMode = true
 			a.previousPermMode = a.permissions.GetMode()
-			a.permissions.SetMode(permissions.ModeAuto) // Bypass permissions
-			a.output.Success("Entered architect mode (permissions bypassed)")
+			a.permissions.SetMode(permissions.ModeAsk) // Auto-approve reads; still prompt for writes/execute
+			a.output.Success("Entered architect mode (reads auto-approved, writes/execute still prompt)")
 			a.output.Info("In TUI mode, use Shift+Tab to toggle between Plan and Chat modes")
 
 			// Log mode change event

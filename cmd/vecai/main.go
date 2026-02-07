@@ -205,6 +205,11 @@ func run() error {
 		AutoTier:     true,        // Enable smart tier selection by default
 		CaptureMode:  captureMode, // Prompt to save responses to notes
 	})
+	defer func() {
+		if err := a.Close(); err != nil {
+			logDebug("error closing agent: %v", err)
+		}
+	}()
 
 	// Handle models subcommand
 	if len(args) > 0 && args[0] == "models" {
@@ -241,14 +246,7 @@ func run() error {
 }
 
 func joinArgs(args []string) string {
-	result := ""
-	for i, arg := range args {
-		if i > 0 {
-			result += " "
-		}
-		result += arg
-	}
-	return result
+	return strings.Join(args, " ")
 }
 
 func printHelp() {

@@ -8,6 +8,41 @@ import (
 	"strings"
 )
 
+// validatePathWithinProject checks that the resolved absolute path is within
+// the current working directory (project root). This prevents path traversal
+// attacks where the LLM could read/write files outside the project.
+func validatePathWithinProject(absPath string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Resolve symlinks to prevent symlink-based traversal
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// If the file doesn't exist yet (write_file), check the parent dir
+		parentDir := filepath.Dir(absPath)
+		resolvedParent, err2 := filepath.EvalSymlinks(parentDir)
+		if err2 != nil {
+			// Parent doesn't exist either, check raw path
+			resolvedPath = absPath
+		} else {
+			resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
+		}
+	}
+
+	resolvedWd, err := filepath.EvalSymlinks(wd)
+	if err != nil {
+		resolvedWd = wd
+	}
+
+	// Ensure the path is within the project directory
+	if !strings.HasPrefix(resolvedPath, resolvedWd+string(filepath.Separator)) && resolvedPath != resolvedWd {
+		return fmt.Errorf("access denied: path %q is outside the project directory", absPath)
+	}
+	return nil
+}
+
 // ReadFileTool reads file contents
 type ReadFileTool struct{}
 
@@ -69,6 +104,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Validate path is within project directory
+	if err := validatePathWithinProject(absPath); err != nil {
+		return "", err
 	}
 
 	// Check if file exists
@@ -240,6 +280,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
+	// Validate path is within project directory
+	if err := validatePathWithinProject(absPath); err != nil {
+		return "", err
+	}
+
 	// Create parent directories
 	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -310,6 +355,11 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Validate path is within project directory
+	if err := validatePathWithinProject(absPath); err != nil {
+		return "", err
 	}
 
 	// Read current content

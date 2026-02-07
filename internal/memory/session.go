@@ -9,13 +9,13 @@ import (
 
 // SessionMemory tracks context for the current conversation
 type SessionMemory struct {
-	CurrentGoal   string
-	FilesTouched  map[string]bool
-	Decisions     []Decision
-	ErrorsHit     []ErrorRecord
-	StartTime     time.Time
-	LastActivity  time.Time
-	mu            sync.RWMutex
+	CurrentGoal  string
+	FilesTouched map[string]bool
+	Decisions    []Decision
+	ErrorsHit    []ErrorRecord
+	StartTime    time.Time
+	LastActivity time.Time
+	mu           sync.RWMutex
 }
 
 // Decision represents a decision made during the session
@@ -184,9 +184,16 @@ func (s *SessionMemory) GetContextSummary() string {
 		}
 	}
 
-	unresolved := s.GetUnresolvedErrors()
-	if len(unresolved) > 0 {
-		sb.WriteString(fmt.Sprintf("Unresolved errors: %d\n", len(unresolved)))
+	// Count unresolved errors inline to avoid recursive RLock deadlock
+	// (GetUnresolvedErrors would try to acquire RLock while we already hold it)
+	unresolvedCount := 0
+	for _, e := range s.ErrorsHit {
+		if !e.Resolved {
+			unresolvedCount++
+		}
+	}
+	if unresolvedCount > 0 {
+		sb.WriteString(fmt.Sprintf("Unresolved errors: %d\n", unresolvedCount))
 	}
 
 	return sb.String()

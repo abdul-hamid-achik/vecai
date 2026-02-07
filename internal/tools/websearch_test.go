@@ -19,8 +19,8 @@ func TestWebSearchTool_Name(t *testing.T) {
 
 func TestWebSearchTool_Permission(t *testing.T) {
 	tool := NewWebSearchTool()
-	if tool.Permission() != PermissionRead {
-		t.Errorf("expected PermissionRead, got %v", tool.Permission())
+	if tool.Permission() != PermissionExecute {
+		t.Errorf("expected PermissionExecute, got %v", tool.Permission())
 	}
 }
 

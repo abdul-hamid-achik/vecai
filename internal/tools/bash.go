@@ -42,15 +42,57 @@ func (t *BashTool) Permission() PermissionLevel {
 	return PermissionExecute
 }
 
+// maxBashTimeout is the maximum allowed timeout for bash commands (5 minutes)
+const maxBashTimeout = 300
+
+// dangerousPatterns contains shell patterns that are blocked for safety.
+// These prevent the LLM from executing destructive or exfiltration commands.
+var dangerousPatterns = []string{
+	"rm -rf /",
+	"rm -rf /*",
+	"mkfs.",
+	"dd if=/dev/",
+	":(){:|:&};:", // fork bomb
+	"> /dev/sd",
+	"chmod -R 777 /",
+	"shutdown",
+	"reboot",
+	"init 0",
+	"init 6",
+}
+
+// networkExfilPatterns are blocked when commands appear to exfiltrate data
+var networkExfilPatterns = []string{
+	"/dev/tcp/",
+	"/dev/udp/",
+}
+
 func (t *BashTool) Execute(ctx context.Context, input map[string]any) (string, error) {
 	command, ok := input["command"].(string)
 	if !ok || command == "" {
 		return "", fmt.Errorf("command is required")
 	}
 
+	// Check for dangerous command patterns
+	lowerCmd := strings.ToLower(strings.TrimSpace(command))
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(lowerCmd, pattern) {
+			return "", fmt.Errorf("command blocked: contains dangerous pattern %q", pattern)
+		}
+	}
+	for _, pattern := range networkExfilPatterns {
+		if strings.Contains(command, pattern) {
+			return "", fmt.Errorf("command blocked: contains network exfiltration pattern %q", pattern)
+		}
+	}
+
 	timeout := 60
 	if t, ok := input["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
+	}
+	// Cap timeout to prevent indefinitely long-running commands
+	if timeout > maxBashTimeout {
+		timeout = maxBashTimeout
 	}
 
 	// Create context with timeout

@@ -55,7 +55,7 @@ func NewManager() (*Manager, error) {
 	}
 
 	dir := filepath.Join(home, ".vecai", "sessions")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create sessions directory: %w", err)
 	}
 
@@ -86,7 +86,7 @@ func (m *Manager) Save(messages []llm.Message, model string) error {
 	}
 
 	sessionPath := m.sessionPath(m.current.ID)
-	if err := os.WriteFile(sessionPath, data, 0644); err != nil {
+	if err := os.WriteFile(sessionPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write session file: %w", err)
 	}
 
