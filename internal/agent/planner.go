@@ -144,7 +144,8 @@ func (p *Planner) createPlan(ctx context.Context, goal string) (*Plan, error) {
 		}
 
 		// Execute tool calls
-		results := p.agent.executeToolCalls(ctx, resp.ToolCalls)
+		cliOutput := &CLIOutput{Out: p.agent.output, In: p.agent.input}
+		results := p.agent.toolExecutor.ExecuteToolCalls(ctx, resp.ToolCalls, cliOutput, cliOutput)
 
 		// Add results to conversation
 		var resultContent strings.Builder
