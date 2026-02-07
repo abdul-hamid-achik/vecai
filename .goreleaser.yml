@@ -61,6 +61,8 @@ release:
 
 homebrew_casks:
   - name: vecai
+    binaries:
+      - vecai
     repository:
       owner: abdul-hamid-achik
       name: homebrew-tap
@@ -69,8 +71,4 @@ homebrew_casks:
     homepage: "https://github.com/abdul-hamid-achik/vecai"
     description: "AI-powered codebase assistant with semantic search and Claude intelligence"
     license: "MIT"
-    install: |
-      bin.install "vecai"
-    test: |
-      system "#{bin}/vecai", "version"
     skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
