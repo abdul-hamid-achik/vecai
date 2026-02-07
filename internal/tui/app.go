@@ -262,10 +262,11 @@ func (m Model) handlePermissionKey(key string) (tea.Model, tea.Cmd) {
 	}
 	m.AddBlock(feedback)
 
-	// Return to streaming state - the agent is still running and will send
+	// Return to streaming state and restore input focus - the agent is still running and will send
 	// more messages (tool results, text, done). Transition to idle happens
 	// when the "done" message arrives.
 	m.state = StateStreaming
+	m.textInput.Focus() // Restore focus so user can type while agent continues
 
 	return m, m.waitForStream()
 }
