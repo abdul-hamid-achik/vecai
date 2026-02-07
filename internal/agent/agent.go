@@ -119,6 +119,9 @@ type Agent struct {
 	toolExecutor        *ToolExecutor
 	commandHandler      *CommandHandler
 	planner             *Planner
+	pipeline            *Pipeline
+	router              *TaskRouter
+	calibrator          *ctxmgr.TokenCalibrator
 	sessionMgr          *session.Manager
 	memoryLayer         *memory.MemoryLayer // Unified memory access
 	analysisMode        bool                // Token-efficient analysis mode
@@ -198,11 +201,8 @@ func New(cfg Config) *Agent {
 		prompt = analysisSystemPrompt
 	}
 
-	// Initialize result cache for analysis mode
-	var resultCache *ctxmgr.ToolResultCache
-	if cfg.AnalysisMode {
-		resultCache = ctxmgr.NewToolResultCache(ctxmgr.DefaultCacheTTL)
-	}
+	// Initialize result cache for tool result summarization
+	resultCache := ctxmgr.NewToolResultCache(ctxmgr.DefaultCacheTTL)
 
 	// Create shutdown context for graceful cleanup
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
@@ -232,6 +232,14 @@ func New(cfg Config) *Agent {
 	a.toolExecutor = NewToolExecutor(cfg.Tools, cfg.Permissions, resultCache, cfg.AnalysisMode)
 	a.commandHandler = NewCommandHandler(a)
 	a.planner = NewPlanner(a)
+	a.calibrator = ctxmgr.NewTokenCalibrator(100)
+	a.pipeline = NewPipeline(PipelineConfig{
+		Client:      cfg.LLM,
+		Config:      cfg.Config,
+		Registry:    cfg.Tools,
+		Permissions: cfg.Permissions,
+	})
+	a.router = NewTaskRouter(cfg.LLM, cfg.Config)
 
 	// Wire up auto-save callback
 	if sessionMgr != nil {
@@ -321,6 +329,24 @@ func (a *Agent) runLineBased(query string) error {
 				logging.Reason(reason),
 				logging.Query(query),
 			)
+		}
+	}
+
+	// Route to pipeline for complex tasks when auto-tier is enabled
+	if a.autoTier && !a.quickMode && !a.analysisMode {
+		intent := a.router.ClassifyIntent(ctx, query)
+		if a.router.ShouldUseMultiAgent(intent) {
+			a.llm.SetTier(a.router.GetRecommendedTier(intent))
+			cliOut := &CLIOutput{Out: a.output, In: a.input}
+			cliOut.Info(fmt.Sprintf("Using multi-agent pipeline (intent: %s)", intent))
+			result, err := a.pipeline.Execute(ctx, query, cliOut)
+			if err != nil {
+				return err
+			}
+			if result.FinalOutput != "" {
+				a.output.TextLn(result.FinalOutput)
+			}
+			return nil
 		}
 	}
 
@@ -580,6 +606,25 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 		}
 	}
 
+	// Route to pipeline for complex tasks when auto-tier is enabled
+	if a.autoTier && !a.quickMode && !a.analysisMode {
+		intent := a.router.ClassifyIntent(ctx, query)
+		if a.router.ShouldUseMultiAgent(intent) {
+			a.llm.SetTier(a.router.GetRecommendedTier(intent))
+			tuiOut := &TUIOutput{Adapter: adapter}
+			tuiOut.Info(fmt.Sprintf("Using multi-agent pipeline (intent: %s)", intent))
+			result, err := a.pipeline.Execute(ctx, query, tuiOut)
+			if err != nil {
+				return err
+			}
+			if result.FinalOutput != "" {
+				adapter.StreamText(result.FinalOutput)
+				adapter.StreamDone()
+			}
+			return nil
+		}
+	}
+
 	// Check for skill match
 	if skill := a.skills.Match(query); skill != nil {
 		adapter.Info(fmt.Sprintf("Using skill: %s", skill.Name))
@@ -609,8 +654,8 @@ func (a *Agent) RunPlan(goal string) error {
 func (a *Agent) getToolDefinitions() []llm.ToolDefinition {
 	var registryDefs []tools.ToolDefinition
 
-	// Use smart tool selection when in analysis mode with smart selection enabled
-	if a.analysisMode && a.config.Analysis.SmartToolSelection && a.currentQuery != "" {
+	// Use smart tool selection when enabled and we have a query context
+	if a.config.Analysis.SmartToolSelection && a.currentQuery != "" {
 		registryDefs = a.toolSelector.SelectTools(a.currentQuery)
 	} else {
 		registryDefs = a.tools.GetDefinitions()

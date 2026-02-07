@@ -20,16 +20,13 @@ func newTestPipeline(t *testing.T) (*Pipeline, *llm.MockLLMClient) {
 	cfg.Memory.Enabled = false
 
 	registry := tools.NewRegistry(&cfg.Tools)
-	output := ui.NewOutputHandler()
-	input := ui.NewInputHandler()
-	policy := permissions.NewPolicy(permissions.ModeAuto, input, output)
+	policy := permissions.NewPolicy(permissions.ModeAuto, ui.NewInputHandler(), ui.NewOutputHandler())
 
 	p := NewPipeline(PipelineConfig{
 		Client:      mock,
 		Config:      cfg,
 		Registry:    registry,
 		Permissions: policy,
-		Output:      *output,
 	})
 
 	return p, mock
@@ -52,8 +49,7 @@ func TestNewPipeline(t *testing.T) {
 	if p.verifier == nil {
 		t.Error("pipeline verifier should not be nil")
 	}
-	// p.output is a value type (not a pointer), so we just verify
-	// the pipeline was constructed without panicking.
+	// Pipeline no longer has an output field; output is passed per-Execute call.
 	if p.config == nil {
 		t.Error("pipeline config should not be nil")
 	}
@@ -297,7 +293,8 @@ func TestPipeline_ExecuteContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	result, err := p.Execute(ctx, "explain how routing works")
+	testOutput := &CLIOutput{Out: ui.NewOutputHandler(), In: ui.NewInputHandler()}
+	result, err := p.Execute(ctx, "explain how routing works", testOutput)
 	// The pipeline should handle the cancellation gracefully.
 	// Depending on where cancellation hits, we may get an error in result or returned.
 	// We just verify it does not panic.

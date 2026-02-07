@@ -10,7 +10,6 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
-	"github.com/abdul-hamid-achik/vecai/internal/ui"
 )
 
 // Pipeline orchestrates multi-agent workflows
@@ -19,7 +18,6 @@ type Pipeline struct {
 	planner  *PlannerAgent
 	executor *ExecutorAgent
 	verifier *VerifierAgent
-	output   ui.OutputHandler
 	config   *config.Config
 }
 
@@ -29,7 +27,6 @@ type PipelineConfig struct {
 	Config      *config.Config
 	Registry    *tools.Registry
 	Permissions *permissions.Policy
-	Output      ui.OutputHandler
 }
 
 // NewPipeline creates a new multi-agent pipeline
@@ -39,7 +36,6 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 		planner:  NewPlannerAgent(cfg.Client, cfg.Config, cfg.Registry),
 		executor: NewExecutorAgent(cfg.Client, cfg.Config, cfg.Registry, cfg.Permissions),
 		verifier: NewVerifierAgent(cfg.Client, cfg.Config, cfg.Registry),
-		output:   cfg.Output,
 		config:   cfg.Config,
 	}
 }
@@ -55,8 +51,10 @@ type PipelineResult struct {
 	Errors        []error
 }
 
-// Execute runs the appropriate pipeline for a task
-func (p *Pipeline) Execute(ctx context.Context, task string) (*PipelineResult, error) {
+// Execute runs the appropriate pipeline for a task.
+// output is the AgentOutput adapter for displaying progress messages —
+// in CLI mode this is a CLIOutput, in TUI mode a TUIOutput.
+func (p *Pipeline) Execute(ctx context.Context, task string, output AgentOutput) (*PipelineResult, error) {
 	result := &PipelineResult{}
 
 	// Step 1: Classify intent
@@ -75,18 +73,18 @@ func (p *Pipeline) Execute(ctx context.Context, task string) (*PipelineResult, e
 
 	// Step 2: Route to appropriate flow
 	if p.router.ShouldUseMultiAgent(result.Intent) {
-		return p.executeMultiAgentFlow(ctx, task, result)
+		return p.executeMultiAgentFlow(ctx, task, result, output)
 	}
 
 	return p.executeSingleAgentFlow(ctx, task, result)
 }
 
 // executeMultiAgentFlow handles complex tasks with planning
-func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, result *PipelineResult) (*PipelineResult, error) {
+func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, result *PipelineResult, output AgentOutput) (*PipelineResult, error) {
 	logDebug("Pipeline: using multi-agent flow")
 
 	// Step 1: Create plan
-	p.output.Info("Creating plan...")
+	output.Info("Creating plan...")
 	plan, err := p.planner.CreatePlan(ctx, task, "")
 	if err != nil {
 		debug.Error("planning", err, map[string]any{"task": task})
@@ -99,7 +97,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 	debug.PlanCreated(plan.Goal, len(plan.Steps))
 
 	// Show plan
-	p.output.TextLn(p.planner.FormatPlan(plan))
+	output.TextLn(p.planner.FormatPlan(plan))
 
 	// Step 2: Execute steps
 	var previousContext string
@@ -122,7 +120,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 		// Log step start
 		debug.StepStart(step.ID, step.Description)
 
-		p.output.Info(fmt.Sprintf("Executing: %s", step.Description))
+		output.Info(fmt.Sprintf("Executing: %s", step.Description))
 
 		// Try step with retries
 		var execResult *ExecutionResult
@@ -137,7 +135,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 			}
 
 			if attempt > 0 {
-				p.output.Info(fmt.Sprintf("Retrying step (attempt %d/%d)...", attempt+1, maxRetries))
+				output.Info(fmt.Sprintf("Retrying step (attempt %d/%d)...", attempt+1, maxRetries))
 			}
 
 			execResult, lastErr = p.executor.ExecuteStep(ctx, step, previousContext)
@@ -177,14 +175,14 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 		default:
 		}
 
-		p.output.Info("Verifying changes...")
+		output.Info("Verifying changes...")
 		changedFiles := p.extractChangedFiles(result.Executions)
 		verification, err := p.verifier.VerifyChanges(ctx, result.Executions[len(result.Executions)-1], changedFiles)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("verification failed: %w", err))
 		} else {
 			result.Verification = verification
-			p.output.TextLn(p.verifier.FormatResult(verification))
+			output.TextLn(p.verifier.FormatResult(verification))
 		}
 	}
 

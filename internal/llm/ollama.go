@@ -205,12 +205,6 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 		)
 	}
 
-	// Check health first
-	if err := c.CheckHealth(ctx); err != nil {
-		debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
-		return nil, err
-	}
-
 	// Build request
 	ollamaMessages := c.buildMessages(messages, systemPrompt)
 	ollamaTools := c.buildTools(tools)
@@ -332,13 +326,6 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 
 		debug.LLMRequest(requestID, currentModel, len(messages), len(tools))
 		startTime := time.Now()
-
-		// Check health first
-		if err := c.CheckHealth(ctx); err != nil {
-			debug.LLMResponse(requestID, time.Since(startTime).Milliseconds(), 0, err)
-			ch <- StreamChunk{Type: "error", Error: err}
-			return
-		}
 
 		// Build request
 		ollamaMessages := c.buildMessages(messages, systemPrompt)

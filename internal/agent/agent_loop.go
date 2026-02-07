@@ -48,6 +48,16 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		}()
 	}
 
+	// Auto RAG: inject relevant code context before first LLM call
+	if a.currentQuery != "" && !a.analysisMode {
+		if ragCtx := a.autoRAGSearch(a.currentQuery); ragCtx != "" {
+			a.contextMgr.AddMessage(llm.Message{
+				Role:    "user",
+				Content: "[Relevant code context from codebase search]\n" + ragCtx,
+			})
+		}
+	}
+
 	for i := 0; i < maxIterations; i++ {
 		// Check for interrupt/cancellation before starting iteration
 		if hasInterrupt {
@@ -171,6 +181,12 @@ func (a *Agent) processStreamChunk(chunk llm.StreamChunk, output AgentOutput, te
 		}
 
 	case "done":
+		// Feed calibrator with actual vs estimated token counts
+		if chunk.Usage != nil && a.calibrator != nil {
+			estimated := a.contextMgr.GetStats().UsedTokens
+			actual := int(chunk.Usage.InputTokens)
+			a.calibrator.Record(estimated, actual)
+		}
 		if chunk.Usage != nil {
 			if su, ok := output.(StreamUsageSupport); ok {
 				su.StreamDoneWithUsage(chunk.Usage.InputTokens, chunk.Usage.OutputTokens)
@@ -200,6 +216,17 @@ type StreamUsageSupport interface {
 // If output implements StatsSupport, also updates the UI stats display.
 func (a *Agent) updateContextStats(ctx context.Context, output AgentOutput) {
 	stats := a.contextMgr.GetStats()
+
+	// Adjust token estimate using calibrator if available
+	if a.calibrator != nil {
+		adjusted := a.calibrator.Adjust(stats.UsedTokens)
+		if adjusted != stats.UsedTokens {
+			stats.UsedTokens = adjusted
+			stats.UsagePercent = float64(adjusted) / float64(stats.ContextWindow)
+			stats.NeedsCompaction = stats.UsagePercent >= a.config.Context.AutoCompactThreshold
+			stats.NeedsWarning = stats.UsagePercent >= a.config.Context.WarnThreshold
+		}
+	}
 
 	// Update TUI stats display if supported
 	if statsOut, ok := output.(StatsSupport); ok {

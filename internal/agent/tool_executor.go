@@ -25,6 +25,7 @@ type ToolExecutor struct {
 	tools        *tools.Registry
 	permissions  *permissions.Policy
 	resultCache  *ctxmgr.ToolResultCache
+	parallelExec *parallelExecutor
 	analysisMode bool
 }
 
@@ -34,13 +35,40 @@ func NewToolExecutor(registry *tools.Registry, perms *permissions.Policy, cache 
 		tools:        registry,
 		permissions:  perms,
 		resultCache:  cache,
+		parallelExec: newParallelExecutor(registry, defaultMaxConcurrency),
 		analysisMode: analysisMode,
 	}
 }
 
+// canParallelize returns true if all tool calls are read-only and permission mode
+// is auto (no prompts needed), making them safe to execute concurrently.
+func (te *ToolExecutor) canParallelize(calls []llm.ToolCall) bool {
+	if len(calls) < 2 {
+		return false
+	}
+	if te.permissions.GetMode() != permissions.ModeAuto {
+		return false
+	}
+	for _, call := range calls {
+		tool, ok := te.tools.Get(call.Name)
+		if !ok {
+			return false
+		}
+		if tool.Permission() != tools.PermissionRead {
+			return false
+		}
+	}
+	return true
+}
+
 // ExecuteToolCalls executes tool calls with unified output and permission checking.
 // It works for both CLI and TUI modes via the AgentOutput and AgentInput interfaces.
+// When all calls are read-only and auto-permission is enabled, they run in parallel.
 func (te *ToolExecutor) ExecuteToolCalls(ctx context.Context, calls []llm.ToolCall, output AgentOutput, input AgentInput) []toolResult {
+	if te.canParallelize(calls) {
+		return te.executeParallel(ctx, calls, output)
+	}
+
 	var results []toolResult
 
 	for _, call := range calls {
@@ -167,6 +195,48 @@ func (te *ToolExecutor) checkPermission(toolName string, level tools.PermissionL
 	default:
 		return false, nil
 	}
+}
+
+// executeParallel runs all tool calls concurrently via parallelExecutor.
+// Called only when canParallelize() returns true (all read-only, auto-permission).
+func (te *ToolExecutor) executeParallel(ctx context.Context, calls []llm.ToolCall, output AgentOutput) []toolResult {
+	output.Activity(fmt.Sprintf("Running %d tools in parallel...", len(calls)))
+
+	// Show each tool call announcement before starting execution
+	for _, call := range calls {
+		description := formatToolDescription(call.Name, call.Input)
+		debug.ToolCall(call.Name, call.Input)
+		output.ToolCall(call.Name, description)
+	}
+
+	// Run all tools concurrently
+	results := te.parallelExec.executeParallel(ctx, calls,
+		func(name string) (bool, error) {
+			// All calls are auto-approved (canParallelize verified ModeAuto)
+			return true, nil
+		},
+		nil, // No per-result callback; we show results in order below
+	)
+
+	// Show results in order and apply caching
+	for i, r := range results {
+		if r.Error {
+			debug.ToolResult(r.Name, false, 0)
+			output.ToolResult(r.Name, r.Result, true)
+		} else {
+			debug.ToolResult(r.Name, true, len(r.Result))
+			displayResult := r.Result
+			if te.resultCache != nil && ctxmgr.ShouldCache(r.Result) {
+				summary, _ := te.resultCache.Store(r.Name, calls[i].Input, r.Result)
+				results[i].Result = summary
+			}
+			output.ToolResult(r.Name, displayResult, false)
+		}
+		// Set ToolCallID from original call
+		results[i].ToolCallID = calls[i].ID
+	}
+
+	return results
 }
 
 // formatToolDescription creates a human-readable description of a tool call.
