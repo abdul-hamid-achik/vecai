@@ -68,9 +68,6 @@ type ContextManager struct {
 	cachedTokens int
 	statsDirty   bool
 
-	// Token calibration (optional, for future use)
-	calibrator *TokenCalibrator
-
 	// Session persistence callback
 	onSave func([]llm.Message)
 }

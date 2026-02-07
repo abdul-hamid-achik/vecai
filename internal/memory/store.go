@@ -385,11 +385,6 @@ func (s *Store) saveImmediate() error {
 	return os.WriteFile(dataFile, data, 0644)
 }
 
-// save writes entries to disk (kept for compatibility with existing internal callers)
-func (s *Store) save() error {
-	return s.saveImmediate()
-}
-
 // Close stops background goroutines and does a final save
 func (s *Store) Close() error {
 	// Signal background goroutines to stop
