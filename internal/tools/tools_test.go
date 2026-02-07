@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+// chdirTemp changes to the given directory for the duration of the test,
+// restoring the original working directory on cleanup. This is needed because
+// the file tools validate that paths are within the project directory (cwd).
+func chdirTemp(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+}
+
 func TestRegistry(t *testing.T) {
 	r := NewRegistry(nil)
 
@@ -121,8 +136,9 @@ func TestReadFileTool(t *testing.T) {
 		t.Errorf("expected permission Read, got %v", tool.Permission())
 	}
 
-	// Create temp file
+	// Create temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "test.txt")
 	content := "line 1\nline 2\nline 3\n"
 	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
@@ -179,8 +195,9 @@ func TestWriteFileTool(t *testing.T) {
 		t.Errorf("expected permission Write, got %v", tool.Permission())
 	}
 
-	// Create temp directory
+	// Create temp directory and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "subdir", "test.txt")
 	content := "test content"
 
@@ -225,8 +242,9 @@ func TestEditFileTool(t *testing.T) {
 		t.Errorf("expected permission Write, got %v", tool.Permission())
 	}
 
-	// Create temp file
+	// Create temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "test.txt")
 	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
 		t.Fatal(err)
@@ -784,8 +802,9 @@ func TestReadFileTool_MaxTokensParam(t *testing.T) {
 func TestReadFileTool_ChunkingLargeFile(t *testing.T) {
 	tool := &ReadFileTool{}
 
-	// Create a large temp file
+	// Create a large temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "large.txt")
 
 	// Create content with many lines (to exceed default token limit)
@@ -821,8 +840,9 @@ func TestReadFileTool_ChunkingLargeFile(t *testing.T) {
 func TestReadFileTool_UnlimitedMaxTokens(t *testing.T) {
 	tool := &ReadFileTool{}
 
-	// Create a temp file
+	// Create a temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "test.txt")
 
 	var sb strings.Builder
@@ -853,8 +873,9 @@ func TestReadFileTool_UnlimitedMaxTokens(t *testing.T) {
 func TestReadFileTool_CustomMaxTokens(t *testing.T) {
 	tool := &ReadFileTool{}
 
-	// Create a large temp file
+	// Create a large temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "large.txt")
 
 	var sb strings.Builder
@@ -885,8 +906,9 @@ func TestReadFileTool_CustomMaxTokens(t *testing.T) {
 func TestReadFileTool_SmallFileNoChunking(t *testing.T) {
 	tool := &ReadFileTool{}
 
-	// Create a small temp file
+	// Create a small temp file and chdir into it for path validation
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	testFile := filepath.Join(dir, "small.txt")
 	content := "This is a small file.\n"
 
