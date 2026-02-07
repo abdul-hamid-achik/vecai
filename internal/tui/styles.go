@@ -183,20 +183,40 @@ func truncate(s string, maxLen int) string {
 // truncateUTF8Safe truncates a string to approximately maxBytes while
 // ensuring we don't split a multi-byte UTF-8 character.
 func truncateUTF8Safe(s string, maxBytes int) string {
+	ellipsis := "..."
+	ellipsisLen := len(ellipsis)
+	
 	if len(s) <= maxBytes {
 		return s
 	}
+	
+	// If maxBytes is too small to fit ellipsis, just return empty or partial ellipsis
+	if maxBytes <= ellipsisLen {
+		if maxBytes <= 0 {
+			return ""
+		}
+		return ellipsis[:maxBytes]
+	}
+	
+	// Reserve space for ellipsis so final result doesn't exceed maxBytes
+	targetBytes := maxBytes - ellipsisLen
+	
 	// Walk backwards from the cut point to find a valid UTF-8 boundary
-	for maxBytes > 0 && maxBytes < len(s) {
+	for targetBytes > 0 && targetBytes < len(s) {
 		// Check if cutting here produces valid UTF-8
-		truncated := s[:maxBytes]
+		truncated := s[:targetBytes]
 		// Verify last rune is complete by checking that the byte count
 		// of the rune-decoded string matches
 		runes := []rune(truncated)
 		if string(runes) == truncated {
-			return truncated + "..."
+			return truncated + ellipsis
 		}
-		maxBytes--
+		targetBytes--
 	}
-	return s[:maxBytes] + "..."
+	
+	// Fallback: ensure we don't exceed maxBytes
+	if targetBytes <= 0 {
+		return ellipsis
+	}
+	return s[:targetBytes] + ellipsis
 }
