@@ -23,7 +23,7 @@ builds:
 
 archives:
   - id: vecai
-    builds:
+    ids:
       - vecai
     name_template: >-
       {{ .ProjectName }}_
@@ -32,7 +32,7 @@ archives:
       {{- .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: zip
 
 checksum:
   name_template: 'checksums.txt'
@@ -59,13 +59,13 @@ release:
   prerelease: auto
   name_template: "v{{.Version}}"
 
-brews:
+homebrew_casks:
   - name: vecai
     repository:
       owner: abdul-hamid-achik
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/abdul-hamid-achik/vecai"
     description: "AI-powered codebase assistant with semantic search and Claude intelligence"
     license: "MIT"
