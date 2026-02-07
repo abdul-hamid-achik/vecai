@@ -176,6 +176,16 @@ func (r *TUIRunner) SetInteractive(interactive bool) {
 	r.interactive = interactive
 }
 
+// SetModeChangeCallback sets a callback for when the user changes modes
+func (r *TUIRunner) SetModeChangeCallback(fn func(AgentMode)) {
+	r.model.SetModeChangeCallback(fn)
+}
+
+// AddSkillCommands adds skill-based commands to the autocomplete dropdown
+func (r *TUIRunner) AddSkillCommands(cmds []CommandDef) {
+	r.model.completer.AddCommands(cmds)
+}
+
 // GetReadyChan returns a channel that closes when TUI is ready
 func (r *TUIRunner) GetReadyChan() <-chan struct{} {
 	return r.model.GetReadyChan()

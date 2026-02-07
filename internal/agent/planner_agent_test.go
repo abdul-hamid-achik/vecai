@@ -421,3 +421,239 @@ func TestPlannerAgent_parsePlan(t *testing.T) {
 		})
 	}
 }
+
+// --- stripMarkdownFences ---
+
+func TestStripMarkdownFences(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "json code fence",
+			input: "```json\n{\"goal\": \"test\"}\n```",
+			want:  "{\"goal\": \"test\"}",
+		},
+		{
+			name:  "plain code fence",
+			input: "```\n{\"goal\": \"test\"}\n```",
+			want:  "{\"goal\": \"test\"}",
+		},
+		{
+			name:  "no fences",
+			input: "{\"goal\": \"test\"}",
+			want:  "{\"goal\": \"test\"}",
+		},
+		{
+			name:  "too short for fences",
+			input: "ab",
+			want:  "ab",
+		},
+		{
+			name:  "multi-line content in fences",
+			input: "```json\n{\n  \"goal\": \"test\",\n  \"steps\": []\n}\n```",
+			want:  "{\n  \"goal\": \"test\",\n  \"steps\": []\n}",
+		},
+		{
+			name:  "no closing fence",
+			input: "```json\n{\"goal\": \"test\"}",
+			want:  "```json\n{\"goal\": \"test\"}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripMarkdownFences(tt.input)
+			if got != tt.want {
+				t.Errorf("stripMarkdownFences() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- parsePlan with markdown fences ---
+
+func TestPlannerAgent_parsePlanWithMarkdownFences(t *testing.T) {
+	planner, _ := newTestPlannerAgent(t)
+
+	// JSON wrapped in markdown fences should parse correctly
+	input := "```json\n{\"goal\":\"test\",\"summary\":\"s\",\"steps\":[{\"id\":\"s1\",\"description\":\"do it\",\"type\":\"code\"}]}\n```"
+	got, err := planner.parsePlan(input)
+	if err != nil {
+		t.Fatalf("parsePlan() with markdown fences should succeed, got error: %v", err)
+	}
+	if len(got.Steps) != 1 {
+		t.Errorf("Expected 1 step, got %d", len(got.Steps))
+	}
+	if got.Goal != "test" {
+		t.Errorf("Expected goal 'test', got %q", got.Goal)
+	}
+}
+
+// --- buildFallbackPlan ---
+
+func TestPlannerAgent_buildFallbackPlan(t *testing.T) {
+	planner, _ := newTestPlannerAgent(t)
+
+	t.Run("numbered steps extraction", func(t *testing.T) {
+		content := "Here is my plan:\n1. Read the codebase\n2. Refactor the logger\n3. Update tests"
+		got := planner.buildFallbackPlan("Refactor", content)
+		if len(got.Steps) != 3 {
+			t.Fatalf("Expected 3 steps from numbered content, got %d", len(got.Steps))
+		}
+		if got.Steps[0].Description != "Read the codebase" {
+			t.Errorf("Step 1 description = %q, want 'Read the codebase'", got.Steps[0].Description)
+		}
+		if got.Steps[2].Description != "Update tests" {
+			t.Errorf("Step 3 description = %q, want 'Update tests'", got.Steps[2].Description)
+		}
+	})
+
+	t.Run("JSON with summary and steps", func(t *testing.T) {
+		content := `{"summary": "Fix the bug", "steps": [{"description": "Find root cause"}, {"description": "Apply patch"}]}`
+		got := planner.buildFallbackPlan("Fix bug", content)
+		if got.Summary != "Fix the bug" {
+			t.Errorf("Summary = %q, want 'Fix the bug'", got.Summary)
+		}
+		if len(got.Steps) != 2 {
+			t.Fatalf("Expected 2 steps, got %d", len(got.Steps))
+		}
+	})
+
+	t.Run("JSON with string steps", func(t *testing.T) {
+		content := `{"summary": "Migrate DB", "steps": ["Create migration", "Run migration", "Verify data"]}`
+		got := planner.buildFallbackPlan("DB migration", content)
+		if len(got.Steps) != 3 {
+			t.Fatalf("Expected 3 steps from string array, got %d", len(got.Steps))
+		}
+		if got.Steps[0].Description != "Create migration" {
+			t.Errorf("Step 1 = %q, want 'Create migration'", got.Steps[0].Description)
+		}
+	})
+
+	t.Run("plain text fallback", func(t *testing.T) {
+		content := "Just do the thing, no structure here."
+		got := planner.buildFallbackPlan("Do thing", content)
+		if len(got.Steps) != 1 {
+			t.Fatalf("Expected 1 fallback step, got %d", len(got.Steps))
+		}
+		if got.Summary != "Generated from unstructured response" {
+			t.Errorf("Summary = %q, want 'Generated from unstructured response'", got.Summary)
+		}
+	})
+
+	t.Run("JSON in markdown fences with fallback", func(t *testing.T) {
+		content := "```json\n{\"summary\": \"Fix it\", \"steps\": [{\"description\": \"Step 1\"}]}\n```"
+		got := planner.buildFallbackPlan("Fix", content)
+		if got.Summary != "Fix it" {
+			t.Errorf("Summary = %q, want 'Fix it'", got.Summary)
+		}
+		if len(got.Steps) != 1 {
+			t.Fatalf("Expected 1 step, got %d", len(got.Steps))
+		}
+	})
+}
+
+// --- truncateDescription ---
+
+func TestTruncateDescription(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short", 200, "short"},
+		{strings.Repeat("a", 200), 200, strings.Repeat("a", 200)},
+		{strings.Repeat("a", 201), 200, strings.Repeat("a", 197) + "..."},
+	}
+	for _, tt := range tests {
+		got := truncateDescription(tt.input, tt.maxLen)
+		if got != tt.want {
+			t.Errorf("truncateDescription(%d chars, %d) = %d chars, want %d chars",
+				len(tt.input), tt.maxLen, len(got), len(tt.want))
+		}
+	}
+}
+
+// --- FormatPlan with long step descriptions ---
+
+func TestPlannerAgent_FormatPlan_LongDescriptionTruncation(t *testing.T) {
+	planner, _ := newTestPlannerAgent(t)
+
+	longDesc := strings.Repeat("x", 300)
+	plan := &StructuredPlan{
+		Goal:    "Test truncation",
+		Summary: "Check that long descriptions are capped",
+		Steps: []PlanStep{
+			{ID: "s1", Description: longDesc, Type: "code"},
+		},
+	}
+
+	output := planner.FormatPlan(plan)
+	// The description in the formatted output should be truncated
+	if strings.Contains(output, longDesc) {
+		t.Error("FormatPlan should truncate long step descriptions")
+	}
+	if !strings.Contains(output, "...") {
+		t.Error("Truncated description should end with '...'")
+	}
+}
+
+// --- looksLikeJSON ---
+
+func TestLooksLikeJSON(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`{"key": "value"}`, true},
+		{`  {"key": "value"}  `, true},
+		{`not json`, false},
+		{`[1,2,3]`, false},
+		{`{broken`, false},
+		{``, false},
+	}
+	for _, tt := range tests {
+		got := looksLikeJSON(tt.input)
+		if got != tt.want {
+			t.Errorf("looksLikeJSON(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// --- cleanFallbackDescription ---
+
+func TestCleanFallbackDescription(t *testing.T) {
+	t.Run("extracts from JSON with summary", func(t *testing.T) {
+		input := `{"summary": "Fix the bug", "extra": "data"}`
+		got := cleanFallbackDescription(input)
+		if got != "Fix the bug" {
+			t.Errorf("cleanFallbackDescription() = %q, want 'Fix the bug'", got)
+		}
+	})
+
+	t.Run("extracts from JSON with goal", func(t *testing.T) {
+		input := `{"goal": "Refactor auth"}`
+		got := cleanFallbackDescription(input)
+		if got != "Refactor auth" {
+			t.Errorf("cleanFallbackDescription() = %q, want 'Refactor auth'", got)
+		}
+	})
+
+	t.Run("plain text truncated", func(t *testing.T) {
+		input := strings.Repeat("x", 300)
+		got := cleanFallbackDescription(input)
+		if len([]rune(got)) > 200 {
+			t.Errorf("cleanFallbackDescription should truncate to 200 runes, got %d", len([]rune(got)))
+		}
+	})
+
+	t.Run("non-JSON returned as-is", func(t *testing.T) {
+		input := "Just a plain description"
+		got := cleanFallbackDescription(input)
+		if got != input {
+			t.Errorf("cleanFallbackDescription() = %q, want %q", got, input)
+		}
+	})
+}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
@@ -84,18 +86,7 @@ IMPORTANT: Keep the plan focused and actionable. Each step should be achievable 
 	plan, err := p.parsePlan(resp.Content)
 	if err != nil {
 		logWarn("PlannerAgent: failed to parse structured plan, using text plan: %v", err)
-		// Create a simple plan from the text response
-		plan = &StructuredPlan{
-			Goal:    goal,
-			Summary: "Generated from unstructured response",
-			Steps: []PlanStep{
-				{
-					ID:          "step1",
-					Description: resp.Content,
-					Type:        "code",
-				},
-			},
-		}
+		plan = p.buildFallbackPlan(goal, resp.Content)
 	}
 
 	logDebug("PlannerAgent: created plan with %d steps", len(plan.Steps))
@@ -237,6 +228,9 @@ func (p *PlannerAgent) parsePlan(content string) (*StructuredPlan, error) {
 	// Try to extract JSON from the response
 	content = strings.TrimSpace(content)
 
+	// Strip markdown code fences (```json ... ``` or ``` ... ```)
+	content = stripMarkdownFences(content)
+
 	// Look for JSON object in the content
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
@@ -269,6 +263,168 @@ func (p *PlannerAgent) parsePlan(content string) (*StructuredPlan, error) {
 	return &plan, nil
 }
 
+// stripMarkdownFences removes markdown code fences from content.
+// Handles ```json\n...\n```, ```\n...\n```, and similar patterns.
+func stripMarkdownFences(content string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 3 {
+		return content
+	}
+
+	first := strings.TrimSpace(lines[0])
+	last := strings.TrimSpace(lines[len(lines)-1])
+
+	// Check if wrapped in code fences
+	if strings.HasPrefix(first, "```") && last == "```" {
+		return strings.Join(lines[1:len(lines)-1], "\n")
+	}
+
+	return content
+}
+
+// buildFallbackPlan creates a plan from an unstructured LLM response.
+// It tries to extract meaningful steps rather than dumping raw content.
+func (p *PlannerAgent) buildFallbackPlan(goal, content string) *StructuredPlan {
+	content = strings.TrimSpace(content)
+
+	// Try lenient JSON parse: the content might be JSON with goal/steps but failed strict parse
+	content = stripMarkdownFences(content)
+	if looksLikeJSON(content) {
+		// Try to extract goal/summary from JSON-like content
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &raw); err == nil {
+			if summary, ok := raw["summary"].(string); ok {
+				steps := extractStepsFromJSON(raw)
+				if len(steps) > 0 {
+					return &StructuredPlan{
+						Goal:    goal,
+						Summary: summary,
+						Steps:   steps,
+					}
+				}
+			}
+		}
+	}
+
+	// Try to extract numbered items as steps (e.g., "1. Do X\n2. Do Y")
+	numberedPattern := regexp.MustCompile(`(?m)^\s*(\d+)[.)]\s+(.+)$`)
+	matches := numberedPattern.FindAllStringSubmatch(content, -1)
+	if len(matches) >= 2 {
+		var steps []PlanStep
+		for i, m := range matches {
+			steps = append(steps, PlanStep{
+				ID:          fmt.Sprintf("step%d", i+1),
+				Description: strings.TrimSpace(m[2]),
+				Type:        "code",
+			})
+		}
+		// Extract a summary from non-numbered content
+		summary := extractSummaryFromText(content, numberedPattern)
+		return &StructuredPlan{
+			Goal:    goal,
+			Summary: summary,
+			Steps:   steps,
+		}
+	}
+
+	// Last resort: use content as a single step, but clean it up
+	desc := cleanFallbackDescription(content)
+	return &StructuredPlan{
+		Goal:    goal,
+		Summary: "Generated from unstructured response",
+		Steps: []PlanStep{
+			{
+				ID:          "step1",
+				Description: desc,
+				Type:        "code",
+			},
+		},
+	}
+}
+
+// looksLikeJSON returns true if the content appears to be JSON
+func looksLikeJSON(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	return strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")
+}
+
+// extractStepsFromJSON tries to pull steps from a loosely-typed JSON map
+func extractStepsFromJSON(raw map[string]interface{}) []PlanStep {
+	stepsRaw, ok := raw["steps"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var steps []PlanStep
+	for i, s := range stepsRaw {
+		switch v := s.(type) {
+		case map[string]interface{}:
+			desc, _ := v["description"].(string)
+			if desc == "" {
+				desc, _ = v["name"].(string)
+			}
+			if desc == "" {
+				continue
+			}
+			stepType, _ := v["type"].(string)
+			if stepType == "" {
+				stepType = "code"
+			}
+			steps = append(steps, PlanStep{
+				ID:          fmt.Sprintf("step%d", i+1),
+				Description: desc,
+				Type:        stepType,
+			})
+		case string:
+			steps = append(steps, PlanStep{
+				ID:          fmt.Sprintf("step%d", i+1),
+				Description: v,
+				Type:        "code",
+			})
+		}
+	}
+	return steps
+}
+
+// extractSummaryFromText extracts non-numbered text as a summary
+func extractSummaryFromText(content string, numberedPattern *regexp.Regexp) string {
+	cleaned := numberedPattern.ReplaceAllString(content, "")
+	cleaned = strings.TrimSpace(cleaned)
+	lines := strings.Split(cleaned, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && len(line) > 10 {
+			return truncateDescription(line, 200)
+		}
+	}
+	return "Plan extracted from text response"
+}
+
+// cleanFallbackDescription cleans up raw content for use as a step description
+func cleanFallbackDescription(content string) string {
+	// If it looks like JSON, try to extract just the meaningful text
+	if looksLikeJSON(content) {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &raw); err == nil {
+			// Try common fields
+			for _, key := range []string{"summary", "goal", "description", "plan"} {
+				if v, ok := raw[key].(string); ok && v != "" {
+					return truncateDescription(v, 200)
+				}
+			}
+		}
+	}
+	return truncateDescription(content, 200)
+}
+
+// truncateDescription truncates a description to maxLen runes, adding ellipsis
+func truncateDescription(s string, maxLen int) string {
+	if utf8.RuneCountInString(s) <= maxLen {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:maxLen-3]) + "..."
+}
+
 // FormatPlan returns a human-readable representation of the plan
 func (p *PlannerAgent) FormatPlan(plan *StructuredPlan) string {
 	var sb strings.Builder
@@ -282,7 +438,8 @@ func (p *PlannerAgent) FormatPlan(plan *StructuredPlan) string {
 		if step.Done {
 			status = "[x]"
 		}
-		sb.WriteString(fmt.Sprintf("%d. %s **%s** (%s)\n", i+1, status, step.Description, step.Type))
+		desc := truncateDescription(step.Description, 200)
+		sb.WriteString(fmt.Sprintf("%d. %s **%s** (%s)\n", i+1, status, desc, step.Type))
 		if len(step.Files) > 0 {
 			sb.WriteString(fmt.Sprintf("   Files: %s\n", strings.Join(step.Files, ", ")))
 		}

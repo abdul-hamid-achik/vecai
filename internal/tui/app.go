@@ -82,6 +82,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		if m.spinnerActive {
 			m.spinnerFrame++
+			// Refresh viewport to animate tool call spinners
+			if len(m.activeTools) > 0 {
+				m.updateViewportContent()
+			}
 			return m, tickCmd()
 		}
 		return m, nil
@@ -151,6 +155,39 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle completer when active (intercept before viewport scrolling)
+	if m.completer.IsActive() {
+		switch msg.Type {
+		case tea.KeyUp:
+			m.completer.MoveUp()
+			return m, nil
+		case tea.KeyDown:
+			m.completer.MoveDown()
+			return m, nil
+		case tea.KeyTab:
+			// Accept selection, fill input (don't submit)
+			accepted := m.completer.Accept()
+			if accepted != "" {
+				m.textInput.SetValue(accepted)
+				m.textInput.CursorEnd()
+			}
+			return m, nil
+		case tea.KeyEnter:
+			// Accept and submit
+			accepted := m.completer.Accept()
+			if accepted != "" {
+				m.textInput.Reset()
+				if m.callbacks.onSubmit != nil {
+					go m.callbacks.onSubmit(accepted)
+				}
+			}
+			return m, nil
+		case tea.KeyEsc:
+			m.completer.Dismiss()
+			return m, nil
+		}
+	}
+
 	// Handle viewport scrolling (arrow keys, page up/down, home/end)
 	switch msg.Type {
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
@@ -158,25 +195,22 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 	case tea.KeyShiftTab:
-		// Handle Shift+Tab for architect mode toggle
-		if m.architectMode {
-			newMode := m.ToggleArchitectSubMode()
-			var feedback string
-			if newMode == "plan" {
-				feedback = "Architect: Plan Mode (design & explore)"
-			} else {
-				feedback = "Architect: Chat Mode (ask questions)"
-			}
-			m.AddBlock(ContentBlock{
-				Type:    BlockInfo,
-				Content: feedback,
-			})
-			return m, nil
+		// Cycle through modes: Ask → Plan → Build → Ask
+		newMode := m.CycleAgentMode()
+		var feedback string
+		switch newMode {
+		case ModeAsk:
+			feedback = "Ask mode — read-only exploration, Q&A"
+		case ModePlan:
+			feedback = "Plan mode — design & explore, writes prompt"
+		case ModeBuild:
+			feedback = "Build mode — full execution"
 		}
-		// Not in architect mode - pass to text input
-		var cmd tea.Cmd
-		m.textInput, cmd = m.textInput.Update(msg)
-		return m, cmd
+		m.AddBlock(ContentBlock{
+			Type:    BlockInfo,
+			Content: feedback,
+		})
+		return m, nil
 	}
 
 	// Handle normal input state
@@ -187,6 +221,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.textInput.Reset()
+		m.completer.Dismiss()
 
 		// Slash commands execute immediately (bypass queue)
 		if strings.HasPrefix(input, "/") {
@@ -237,6 +272,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Update text input for regular typing
 	var cmd tea.Cmd
 	m.textInput, cmd = m.textInput.Update(msg)
+
+	// Update completer after each keystroke
+	m.completer.Update(m.textInput.Value())
+
 	return m, cmd
 }
 
@@ -344,16 +383,50 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			m.activityMessage = "Running: " + msg.ToolName + " - " + truncate(msg.ToolDesc, 30)
 		}
 		m.state = StateStreaming
+
+		// Create tool meta with timing and category
+		meta := &ToolBlockMeta{
+			ToolType:  classifyTool(msg.ToolName),
+			StartTime: time.Now(),
+			IsRunning: true,
+			GroupID:   msg.GroupID,
+		}
+		// Track running tool
+		if msg.GroupID != "" {
+			m.activeTools[msg.GroupID] = meta
+		}
+
 		m.AddBlock(ContentBlock{
 			Type:     BlockToolCall,
 			ToolName: msg.ToolName,
 			Content:  msg.ToolDesc,
+			ToolMeta: meta,
 		})
 		return m, tea.Batch(m.waitForStream(), startSpinner(&m))
 
 	case "tool_result":
 		// Clear activity message when tool completes
 		m.activityMessage = ""
+
+		// Calculate elapsed time from matching tool_call
+		var resultMeta *ToolBlockMeta
+		if msg.GroupID != "" {
+			if callMeta, ok := m.activeTools[msg.GroupID]; ok {
+				callMeta.IsRunning = false
+				callMeta.EndTime = time.Now()
+				callMeta.Elapsed = callMeta.EndTime.Sub(callMeta.StartTime)
+				resultMeta = &ToolBlockMeta{
+					ToolType:  callMeta.ToolType,
+					StartTime: callMeta.StartTime,
+					EndTime:   callMeta.EndTime,
+					Elapsed:   callMeta.Elapsed,
+					GroupID:   msg.GroupID,
+					ResultLen: len(msg.Text),
+				}
+				delete(m.activeTools, msg.GroupID)
+			}
+		}
+
 		// Truncate long results (UTF-8 safe)
 		result := msg.Text
 		if len(result) > 500 {
@@ -364,6 +437,7 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 			ToolName: msg.ToolName,
 			Content:  result,
 			IsError:  msg.IsError,
+			ToolMeta: resultMeta,
 		})
 		return m, m.waitForStream()
 

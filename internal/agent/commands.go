@@ -24,8 +24,8 @@ type CommandContext interface {
 	ClearQueue()
 	// GetConversationText returns the full conversation text for /copy.
 	GetConversationText() string
-	// SetArchitectMode toggles architect mode in the display.
-	SetArchitectMode(enabled bool)
+	// SetAgentMode changes the agent mode in the display.
+	SetAgentMode(mode tui.AgentMode)
 	// SetSessionID updates the displayed session ID.
 	SetSessionID(id string)
 	// GetTUIAdapter returns the underlying TUI adapter, or nil for CLI.
@@ -143,20 +143,29 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 		}
 		return true
 
+	case "/ask":
+		ch.switchMode(tui.ModeAsk, output, cmdCtx)
+		return true
+
 	case "/plan":
 		if len(parts) < 2 {
-			output.ErrorStr("Usage: /plan <goal>")
+			// No args: switch to Plan mode
+			ch.switchMode(tui.ModePlan, output, cmdCtx)
 			return true
 		}
+		// With args: run plan command
 		goal := strings.Join(parts[1:], " ")
 		if cmdCtx.GetTUIAdapter() != nil {
-			// TUI mode: plan mode not fully supported yet
 			output.Info("Plan mode not fully supported in TUI yet. Use: vecai plan \"" + goal + "\"")
 		} else {
 			if err := a.RunPlan(goal); err != nil {
 				output.Error(err)
 			}
 		}
+		return true
+
+	case "/build":
+		ch.switchMode(tui.ModeBuild, output, cmdCtx)
 		return true
 
 	case "/skills":
@@ -195,7 +204,12 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 		return true
 
 	case "/software-architect", "/architect":
-		ch.toggleArchitectMode(output, cmdCtx)
+		// Legacy: toggle between Ask and Build for backwards compat
+		if a.agentMode == tui.ModeBuild {
+			ch.switchMode(tui.ModeAsk, output, cmdCtx)
+		} else {
+			ch.switchMode(tui.ModeBuild, output, cmdCtx)
+		}
 		return true
 
 	case "/delete":
@@ -212,10 +226,12 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 func (ch *CommandHandler) showHelp(output AgentOutput) {
 	output.Info("Commands:")
 	output.Info("  /help            Show this help")
+	output.Info("  /ask             Switch to Ask mode (read-only)")
+	output.Info("  /plan            Switch to Plan mode (explore & design)")
+	output.Info("  /plan <goal>     Create a plan for a goal")
+	output.Info("  /build           Switch to Build mode (full execution)")
 	output.Info("  /copy            Copy conversation to clipboard")
 	output.Info("  /mode <tier>     Switch model (fast/smart/genius)")
-	output.Info("  /architect       Toggle architect mode (Shift+Tab for plan/chat)")
-	output.Info("  /plan <goal>     Enter plan mode")
 	output.Info("  /skills          List available skills")
 	output.Info("  /status          Check vecgrep status")
 	output.Info("  /reindex         Update vecgrep search index")
@@ -228,6 +244,7 @@ func (ch *CommandHandler) showHelp(output AgentOutput) {
 	output.Info("  /clear           Clear conversation")
 	output.Info("  /exit            Exit interactive mode")
 	output.Info("")
+	output.Info("Modes: Shift+Tab to cycle | Ask (read-only) → Plan (explore) → Build (execute)")
 	output.Info("Debug: Run with --debug or -d flag")
 }
 
@@ -363,41 +380,49 @@ func (ch *CommandHandler) newSession(output AgentOutput, cmdCtx CommandContext) 
 	output.Success(fmt.Sprintf("Started new session (%s)", sess.ID[:8]))
 }
 
-// toggleArchitectMode switches architect mode on/off.
-func (ch *CommandHandler) toggleArchitectMode(output AgentOutput, cmdCtx CommandContext) {
+// switchMode changes the agent mode and updates permissions accordingly.
+func (ch *CommandHandler) switchMode(mode tui.AgentMode, output AgentOutput, cmdCtx CommandContext) {
 	a := ch.agent
-	if a.architectMode {
-		// Exit architect mode
-		a.architectMode = false
-		a.permissions.SetMode(a.previousPermMode) // Restore permissions
-		cmdCtx.SetArchitectMode(false)
-		output.Success("Exited architect mode")
+	oldMode := a.agentMode
+	a.agentMode = mode
+	cmdCtx.SetAgentMode(mode)
 
-		// Log mode change event
-		if log := logging.Global(); log != nil {
-			log.Event(logging.EventAgentModeChange,
-				logging.From("architect"),
-				logging.To("interactive"),
-			)
+	// Update permissions based on mode
+	switch mode {
+	case tui.ModeAsk:
+		if a.previousPermMode == 0 {
+			a.previousPermMode = a.permissions.GetMode()
 		}
-	} else {
-		// Enter architect mode
-		a.architectMode = true
-		a.previousPermMode = a.permissions.GetMode()
-		a.permissions.SetMode(permissions.ModeAsk) // Auto-approve reads; still prompt for writes/execute
-		cmdCtx.SetArchitectMode(true)
-		output.Success("Entered architect mode (reads auto-approved, writes/execute still prompt)")
-		output.Info("Use Shift+Tab to toggle between Plan and Chat modes")
-		output.Info("  Plan mode: Design and explore the codebase")
-		output.Info("  Chat mode: Ask questions and discuss")
+		a.permissions.SetMode(permissions.ModeAnalysis) // Reads auto, writes blocked
+	case tui.ModePlan:
+		if a.previousPermMode == 0 {
+			a.previousPermMode = a.permissions.GetMode()
+		}
+		a.permissions.SetMode(permissions.ModeAsk) // Reads auto, writes prompt
+	case tui.ModeBuild:
+		if a.previousPermMode != 0 {
+			a.permissions.SetMode(a.previousPermMode) // Restore original
+			a.previousPermMode = 0
+		}
+	}
 
-		// Log mode change event
-		if log := logging.Global(); log != nil {
-			log.Event(logging.EventAgentModeChange,
-				logging.From("interactive"),
-				logging.To("architect"),
-			)
-		}
+	var desc string
+	switch mode {
+	case tui.ModeAsk:
+		desc = "Ask mode — read-only exploration, Q&A"
+	case tui.ModePlan:
+		desc = "Plan mode — design & explore, writes prompt"
+	case tui.ModeBuild:
+		desc = "Build mode — full execution"
+	}
+	output.Success(desc)
+
+	// Log mode change event
+	if log := logging.Global(); log != nil {
+		log.Event(logging.EventAgentModeChange,
+			logging.From(oldMode.String()),
+			logging.To(mode.String()),
+		)
 	}
 }
 

@@ -134,9 +134,9 @@ type Agent struct {
 	// Track if we've shown the context warning this session
 	shownContextWarning bool
 
-	// Architect mode state
-	architectMode    bool             // Whether in architect mode
-	previousPermMode permissions.Mode // To restore after exiting architect mode
+	// Agent mode state
+	agentMode        tui.AgentMode    // Current mode: Ask, Plan, Build
+	previousPermMode permissions.Mode // To restore after exiting non-Build mode
 
 	// Graceful shutdown
 	shutdownCtx    context.Context
@@ -399,6 +399,28 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 	adapter := runner.GetAdapter()
 	logDebug("TUI runner created")
 
+	// Wire up mode change callback so Shift+Tab updates agent state
+	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
+		a.agentMode = mode
+		switch mode {
+		case tui.ModeAsk:
+			if a.previousPermMode == 0 {
+				a.previousPermMode = a.permissions.GetMode()
+			}
+			a.permissions.SetMode(permissions.ModeAnalysis)
+		case tui.ModePlan:
+			if a.previousPermMode == 0 {
+				a.previousPermMode = a.permissions.GetMode()
+			}
+			a.permissions.SetMode(permissions.ModeAsk)
+		case tui.ModeBuild:
+			if a.previousPermMode != 0 {
+				a.permissions.SetMode(a.previousPermMode)
+				a.previousPermMode = 0
+			}
+		}
+	})
+
 	// Set up the onReady callback to execute initial query
 	if initialQuery != "" {
 		logDebug("Setting up onReady callback for initial query")
@@ -453,6 +475,9 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 			adapter.StreamDone()
 		}
 	})
+
+	// Inject skill commands into autocomplete
+	a.injectSkillCommands(runner)
 
 	// Check vecgrep status on startup (only for interactive mode)
 	if interactive || initialQuery == "" {
@@ -519,6 +544,29 @@ func (a *Agent) RunInteractiveTUI() error {
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
 
+	// Wire up mode change callback so Shift+Tab updates agent state
+	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
+		a.agentMode = mode
+		// Update permissions based on mode
+		switch mode {
+		case tui.ModeAsk:
+			if a.previousPermMode == 0 {
+				a.previousPermMode = a.permissions.GetMode()
+			}
+			a.permissions.SetMode(permissions.ModeAnalysis)
+		case tui.ModePlan:
+			if a.previousPermMode == 0 {
+				a.previousPermMode = a.permissions.GetMode()
+			}
+			a.permissions.SetMode(permissions.ModeAsk)
+		case tui.ModeBuild:
+			if a.previousPermMode != 0 {
+				a.permissions.SetMode(a.previousPermMode)
+				a.previousPermMode = 0
+			}
+		}
+	})
+
 	// Set up the onReady callback
 	runner.SetOnReady(func() {
 		// Show non-blocking session hint if available
@@ -574,6 +622,9 @@ func (a *Agent) RunInteractiveTUI() error {
 			adapter.StreamDone()
 		}
 	})
+
+	// Inject skill commands into autocomplete
+	a.injectSkillCommands(runner)
 
 	// Check vecgrep status on startup
 	a.checkVecgrepStatusTUI(adapter)
@@ -649,8 +700,21 @@ func (a *Agent) RunPlan(goal string) error {
 	return a.planner.Execute(goal)
 }
 
+// readOnlyToolNames lists tools available in Ask mode
+var readOnlyToolNames = map[string]bool{
+	"read_file":       true,
+	"list_files":      true,
+	"grep":            true,
+	"vecgrep_search":  true,
+	"vecgrep_similar": true,
+	"vecgrep_status":  true,
+	"ast_parse":       true,
+	"lsp_query":       true,
+}
+
 // getToolDefinitions converts tools to LLM format
 // Uses smart selection in analysis mode with SmartToolSelection enabled
+// In Ask mode, filters to read-only tools only
 func (a *Agent) getToolDefinitions() []llm.ToolDefinition {
 	var registryDefs []tools.ToolDefinition
 
@@ -659,6 +723,17 @@ func (a *Agent) getToolDefinitions() []llm.ToolDefinition {
 		registryDefs = a.toolSelector.SelectTools(a.currentQuery)
 	} else {
 		registryDefs = a.tools.GetDefinitions()
+	}
+
+	// Filter to read-only tools in Ask mode
+	if a.agentMode == tui.ModeAsk {
+		filtered := make([]tools.ToolDefinition, 0, len(registryDefs))
+		for _, d := range registryDefs {
+			if readOnlyToolNames[d.Name] {
+				filtered = append(filtered, d)
+			}
+		}
+		registryDefs = filtered
 	}
 
 	defs := make([]llm.ToolDefinition, len(registryDefs))
@@ -684,12 +759,22 @@ func (a *Agent) getSystemPrompt() string {
 
 	var sections []string
 
+	// Mode-specific instructions
+	switch a.agentMode {
+	case tui.ModeAsk:
+		sections = append(sections, "## Current Mode: Ask\nYou are in Ask mode. Help the user understand their codebase. Use read-only tools (read_file, list_files, grep, vecgrep_search). Do NOT modify files or execute commands.")
+	case tui.ModePlan:
+		sections = append(sections, "## Current Mode: Plan\nYou are in Plan mode. Explore the codebase and create implementation plans. Reads are free, writes require confirmation. Focus on analysis and planning.")
+	case tui.ModeBuild:
+		// Build mode: no extra instructions needed, use default system prompt
+	}
+
 	// Existing: project instructions
 	if a.projectInstructions != "" {
 		sections = append(sections, "## Project-Specific Instructions\n\n"+a.projectInstructions)
 	}
 
-	// NEW: memory context enrichment
+	// Memory context enrichment
 	if a.memoryLayer != nil && a.currentQuery != "" {
 		if ctx := a.memoryLayer.GetContextEnrichment(a.currentQuery); ctx != "" {
 			sections = append(sections, ctx)
@@ -716,6 +801,28 @@ func loadProjectInstructions() string {
 	}
 
 	return ""
+}
+
+// injectSkillCommands adds loaded skills to the TUI autocomplete dropdown
+func (a *Agent) injectSkillCommands(runner *tui.TUIRunner) {
+	skillList := a.skills.List()
+	if len(skillList) == 0 {
+		return
+	}
+	var cmds []tui.CommandDef
+	for _, s := range skillList {
+		for _, trigger := range s.Triggers {
+			if strings.HasPrefix(trigger, "/") {
+				cmds = append(cmds, tui.CommandDef{
+					Name:        trigger,
+					Description: s.Description,
+				})
+			}
+		}
+	}
+	if len(cmds) > 0 {
+		runner.AddSkillCommands(cmds)
+	}
 }
 
 // ClearHistory clears conversation history

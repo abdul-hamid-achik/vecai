@@ -4,7 +4,7 @@ import "github.com/abdul-hamid-achik/vecai/internal/tui"
 
 // TUICommandContext implements CommandContext for the TUI environment.
 // It wraps a TUIRunner to provide access to the viewport, message queue,
-// conversation text, and architect mode toggle.
+// conversation text, and agent mode switching.
 type TUICommandContext struct {
 	Runner *tui.TUIRunner
 }
@@ -27,9 +27,9 @@ func (t *TUICommandContext) GetConversationText() string {
 	return t.Runner.GetConversationText()
 }
 
-// SetArchitectMode toggles architect mode in the TUI model.
-func (t *TUICommandContext) SetArchitectMode(enabled bool) {
-	t.Runner.GetModel().SetArchitectMode(enabled)
+// SetAgentMode changes the agent mode in the TUI model.
+func (t *TUICommandContext) SetAgentMode(mode tui.AgentMode) {
+	t.Runner.GetModel().SetAgentMode(mode)
 }
 
 // SetSessionID updates the session ID displayed in the TUI header.

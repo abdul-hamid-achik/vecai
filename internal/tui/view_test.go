@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stripANSI removes ANSI escape codes from a string for easier testing
@@ -124,5 +125,230 @@ func TestMixedListRendering(t *testing.T) {
 	// Should NOT contain literal "%d"
 	if strings.Contains(plain, "%d") {
 		t.Errorf("Mixed list contains literal '%%d':\n%s", plain)
+	}
+}
+
+// --- Tool Visualization Rendering Tests ---
+
+func TestRenderToolCallBlock_CategoryIcons(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	tests := []struct {
+		name     string
+		toolName string
+		toolType ToolCategory
+		wantIcon string
+		wantLabel string
+	}{
+		{"read tool", "read_file", ToolCategoryRead, iconToolRead, "[READ]"},
+		{"write tool", "write_file", ToolCategoryWrite, iconToolWrite, "[WRITE]"},
+		{"exec tool", "bash", ToolCategoryExecute, iconToolExec, "[EXEC]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block := ContentBlock{
+				Type:     BlockToolCall,
+				ToolName: tt.toolName,
+				Content:  "description",
+				ToolMeta: &ToolBlockMeta{
+					ToolType:  tt.toolType,
+					IsRunning: false,
+					GroupID:   "test-1",
+				},
+			}
+			rendered := model.renderToolCallBlock(block)
+			plain := stripANSI(rendered)
+
+			if !strings.Contains(plain, tt.wantIcon) {
+				t.Errorf("Expected icon %q in rendered output %q", tt.wantIcon, plain)
+			}
+			if !strings.Contains(plain, tt.wantLabel) {
+				t.Errorf("Expected label %q in rendered output %q", tt.wantLabel, plain)
+			}
+			if !strings.Contains(plain, tt.toolName) {
+				t.Errorf("Expected tool name %q in rendered output %q", tt.toolName, plain)
+			}
+		})
+	}
+}
+
+func TestRenderToolCallBlock_SpinnerWhenRunning(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolCall,
+		ToolName: "bash",
+		Content:  "running command",
+		ToolMeta: &ToolBlockMeta{
+			ToolType:  ToolCategoryExecute,
+			IsRunning: true,
+			GroupID:   "test-1",
+		},
+	}
+	rendered := model.renderToolCallBlock(block)
+	plain := stripANSI(rendered)
+
+	// Should show spinner frame instead of category icon
+	spinnerFrame := GetSpinnerFrame(model.spinnerFrame)
+	if !strings.Contains(plain, spinnerFrame) {
+		t.Errorf("Expected spinner frame %q in rendered output %q", spinnerFrame, plain)
+	}
+}
+
+func TestRenderToolCallBlock_NoMeta(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolCall,
+		ToolName: "some_tool",
+		Content:  "desc",
+		ToolMeta: nil,
+	}
+	rendered := model.renderToolCallBlock(block)
+	plain := stripANSI(rendered)
+
+	// Should fall back to default icon
+	if !strings.Contains(plain, iconToolCall) {
+		t.Errorf("Expected default icon %q in rendered output %q", iconToolCall, plain)
+	}
+	if !strings.Contains(plain, "some_tool") {
+		t.Errorf("Expected tool name in rendered output %q", plain)
+	}
+}
+
+func TestRenderToolResultBlock_WithElapsedTime(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolResult,
+		ToolName: "read_file",
+		Content:  "file contents here",
+		IsError:  false,
+		ToolMeta: &ToolBlockMeta{
+			ToolType: ToolCategoryRead,
+			Elapsed:  1500 * time.Millisecond,
+			GroupID:  "test-1",
+		},
+	}
+	rendered := model.renderToolResultBlock(block)
+	plain := stripANSI(rendered)
+
+	if !strings.Contains(plain, iconSuccess) {
+		t.Errorf("Expected success icon in rendered output %q", plain)
+	}
+	if !strings.Contains(plain, "read_file") {
+		t.Errorf("Expected tool name in rendered output %q", plain)
+	}
+	if !strings.Contains(plain, "1.5s") {
+		t.Errorf("Expected elapsed time '1.5s' in rendered output %q", plain)
+	}
+}
+
+func TestRenderToolResultBlock_Error(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolResult,
+		ToolName: "bash",
+		Content:  "command not found",
+		IsError:  true,
+	}
+	rendered := model.renderToolResultBlock(block)
+	plain := stripANSI(rendered)
+
+	if !strings.Contains(plain, iconError) {
+		t.Errorf("Expected error icon in rendered output %q", plain)
+	}
+	if !strings.Contains(plain, "command not found") {
+		t.Errorf("Expected error content in rendered output %q", plain)
+	}
+}
+
+func TestRenderToolResultBlock_TruncationIndicator(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolResult,
+		ToolName: "read_file",
+		Content:  "truncated content...",
+		IsError:  false,
+		ToolMeta: &ToolBlockMeta{
+			ToolType:  ToolCategoryRead,
+			Elapsed:   200 * time.Millisecond,
+			ResultLen: 2450, // Original was > 500
+		},
+	}
+	rendered := model.renderToolResultBlock(block)
+	plain := stripANSI(rendered)
+
+	// Should show truncation indicator with byte count
+	if !strings.Contains(plain, "2.4 KB") {
+		t.Errorf("Expected truncation indicator with byte count in rendered output %q", plain)
+	}
+	if !strings.Contains(plain, "showing first 500") {
+		t.Errorf("Expected 'showing first 500' in rendered output %q", plain)
+	}
+}
+
+func TestRenderToolResultBlock_NoOutput(t *testing.T) {
+	streamChan := make(chan StreamMsg, 10)
+	model := NewModel("test", streamChan)
+
+	block := ContentBlock{
+		Type:     BlockToolResult,
+		ToolName: "write_file",
+		Content:  "(no output)",
+		IsError:  false,
+		ToolMeta: &ToolBlockMeta{
+			ToolType: ToolCategoryWrite,
+			Elapsed:  50 * time.Millisecond,
+		},
+	}
+	rendered := model.renderToolResultBlock(block)
+	plain := stripANSI(rendered)
+
+	// Should show tool name and time but NOT the "(no output)" content
+	if !strings.Contains(plain, "write_file") {
+		t.Errorf("Expected tool name in rendered output %q", plain)
+	}
+	// Content "(no output)" should be suppressed
+	if strings.Contains(plain, "(no output)") {
+		t.Errorf("'(no output)' should be suppressed in rendered output %q", plain)
+	}
+}
+
+// --- Helper Function Tests ---
+
+func TestTruncateUTF8Safe(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		want     string
+	}{
+		{"short string", "short", 100, "short"},
+		{"truncate mid-word", "hello world", 8, "hello..."},
+		{"empty string", "", 10, ""},
+		{"fits exactly", "ab", 3, "ab"},
+		{"exact length", "abcdef", 6, "abcdef"},
+		{"one over", "abcdefgh", 6, "abc..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateUTF8Safe(tt.input, tt.maxBytes)
+			if got != tt.want {
+				t.Errorf("truncateUTF8Safe(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
+			}
+			if len(got) > tt.maxBytes {
+				t.Errorf("truncateUTF8Safe result exceeds maxBytes: len(%q) = %d > %d", got, len(got), tt.maxBytes)
+			}
+		})
 	}
 }

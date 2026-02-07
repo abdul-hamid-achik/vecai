@@ -30,6 +30,7 @@ type StreamMsg struct {
 	ToolName      string
 	ToolDesc      string
 	IsError       bool
+	GroupID       string                // Links tool_call to tool_result
 	Level         tools.PermissionLevel
 	Stats         *SessionStats     // Session stats (only for "stats" type)
 	Usage         *TokenUsage       // Token usage (only for "done" type)

@@ -145,6 +145,40 @@ var (
 	permissionPromptStyle = lipgloss.NewStyle().
 				Foreground(colorCaution).
 				Bold(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// MODE BADGES
+	// ═══════════════════════════════════════════════════════════════════════
+	modeBadgeAskStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
+
+	modeBadgePlanStyle = lipgloss.NewStyle().
+				Foreground(colorCaution).
+				Bold(true)
+
+	modeBadgeBuildStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess).
+				Bold(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// TOOL VISUALIZATION
+	// ═══════════════════════════════════════════════════════════════════════
+	toolCategoryReadStyle = lipgloss.NewStyle().
+				Foreground(colorAccent2)
+
+	toolCategoryWriteStyle = lipgloss.NewStyle().
+				Foreground(colorCaution)
+
+	toolCategoryExecStyle = lipgloss.NewStyle().
+				Foreground(colorError)
+
+	toolElapsedStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Italic(true)
+
+	toolTruncIndicatorStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
 )
 
 // Icons - minimal, consistent set
@@ -157,6 +191,11 @@ const (
 	iconUser     = ">" // Prompt
 	iconArrowUp  = "↑" // Upload/input tokens
 	iconArrowDn  = "↓" // Download/output tokens
+
+	// Tool category icons
+	iconToolRead  = "◇" // Open diamond for reads
+	iconToolWrite = "◆" // Filled diamond for writes
+	iconToolExec  = "▶" // Play triangle for execution
 )
 
 // Spinner frames (dots pattern - cleaner look)

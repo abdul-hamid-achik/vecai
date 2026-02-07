@@ -16,6 +16,8 @@ type TUIAdapter struct {
 	resultChan    chan PermissionResult
 	interruptChan chan struct{}
 	useColors     bool
+	lastGroupID   string // Links ToolCall to ToolResult
+	groupCounter  int    // Monotonically increasing group ID
 }
 
 // NewTUIAdapter creates a new TUI adapter
@@ -73,6 +75,10 @@ func (a *TUIAdapter) GetInterruptChan() <-chan struct{} {
 
 // ToolCall outputs a tool call notification
 func (a *TUIAdapter) ToolCall(name string, description string) {
+	// Generate a unique group ID to link call and result
+	a.groupCounter++
+	a.lastGroupID = fmt.Sprintf("tool-%d", a.groupCounter)
+
 	// Send activity update first
 	activityMsg := fmt.Sprintf("Running: %s", name)
 	if description != "" && len(description) <= 30 {
@@ -82,13 +88,17 @@ func (a *TUIAdapter) ToolCall(name string, description string) {
 	}
 	a.streamChan <- NewActivityMsg(activityMsg)
 
-	// Then send tool call block
-	a.streamChan <- NewToolCallMsg(name, description)
+	// Then send tool call block with group ID
+	msg := NewToolCallMsg(name, description)
+	msg.GroupID = a.lastGroupID
+	a.streamChan <- msg
 }
 
 // ToolResult outputs a tool result
 func (a *TUIAdapter) ToolResult(name string, result string, isError bool) {
-	a.streamChan <- NewToolResultMsg(name, result, isError)
+	msg := NewToolResultMsg(name, result, isError)
+	msg.GroupID = a.lastGroupID
+	a.streamChan <- msg
 }
 
 // Error outputs an error message

@@ -7,7 +7,7 @@ import (
 
 // CLICommandContext implements CommandContext for the CLI (non-TUI) environment.
 // Most TUI-specific operations are no-ops since the CLI doesn't have a
-// viewport, message queue, or architect mode toggle.
+// viewport, message queue, or agent mode switching.
 type CLICommandContext struct {
 	Input *ui.InputHandler
 }
@@ -31,8 +31,8 @@ func (c *CLICommandContext) GetConversationText() string {
 	return ""
 }
 
-// SetArchitectMode is a no-op for CLI mode (no display state to update).
-func (c *CLICommandContext) SetArchitectMode(_ bool) {}
+// SetAgentMode is a no-op for CLI mode (no display state to update).
+func (c *CLICommandContext) SetAgentMode(_ tui.AgentMode) {}
 
 // SetSessionID is a no-op for CLI mode (no header to update).
 func (c *CLICommandContext) SetSessionID(_ string) {}

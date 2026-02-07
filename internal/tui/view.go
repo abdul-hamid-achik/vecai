@@ -342,6 +342,15 @@ func (m Model) renderFooter() string {
 	b.WriteString(m.renderStatusBar())
 	b.WriteString("\n")
 
+	// Show completer dropdown above input if active
+	if m.completer.IsActive() {
+		dropdown := m.completer.Render(m.width)
+		if dropdown != "" {
+			b.WriteString(dropdown)
+			b.WriteString("\n")
+		}
+	}
+
 	// Input prompt
 	prompt := inputPromptStyle.Render("> ")
 
@@ -424,10 +433,14 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, warningStyle.Render(fmt.Sprintf("+%d queued", queueLen)))
 	}
 
-	// Show architect mode indicator
-	if m.architectMode {
-		modeStr := fmt.Sprintf("Architect[%s]", m.architectSubMode)
-		parts = append(parts, warningStyle.Render(modeStr))
+	// Show mode badge (color-coded)
+	switch m.agentMode {
+	case ModeAsk:
+		parts = append(parts, modeBadgeAskStyle.Render("Ask"))
+	case ModePlan:
+		parts = append(parts, modeBadgePlanStyle.Render("Plan"))
+	case ModeBuild:
+		parts = append(parts, modeBadgeBuildStyle.Render("Build"))
 	}
 
 	// Show contextual hint based on state
@@ -437,11 +450,7 @@ func (m Model) renderStatusBar() string {
 	case StatePermission:
 		parts = append(parts, statsHintStyle.Render("y/n/a/v"))
 	default:
-		if m.architectMode {
-			parts = append(parts, statsHintStyle.Render("Shift+Tab to toggle"))
-		} else {
-			parts = append(parts, statsHintStyle.Render("/help"))
-		}
+		parts = append(parts, statsHintStyle.Render("Shift+Tab: mode  /help"))
 	}
 
 	// Join with simple spacing (cleaner look)
@@ -453,10 +462,11 @@ func (m Model) renderStatusBar() string {
 // formatDuration formats a duration as a human-readable string
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
-		return "<1s"
+		ms := d.Milliseconds()
+		return fmt.Sprintf("%dms", ms)
 	}
 	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	minutes := int(d.Minutes())
 	seconds := int(d.Seconds()) % 60
@@ -474,6 +484,17 @@ func formatTokenCount(count int64) string {
 		return fmt.Sprintf("%d", count)
 	}
 	return fmt.Sprintf("%.1fk", float64(count)/1000)
+}
+
+// formatByteCount formats a byte count as a human-readable string
+func formatByteCount(n int) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(n)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
 }
 
 // renderPermissionFooter renders the permission prompt in the footer
@@ -567,18 +588,47 @@ func (m Model) renderThinkingBlock(block ContentBlock) string {
 	return thinkingStyle.Render(block.Content)
 }
 
-// renderToolCallBlock renders a tool call notification
+// renderToolCallBlock renders a tool call notification with category icon
 func (m Model) renderToolCallBlock(block ContentBlock) string {
-	icon := toolCallStyle.Render(iconToolCall)
-	name := toolNameStyle.Render(" " + block.ToolName)
-	desc := ""
-	if block.Content != "" {
-		desc = toolDescStyle.Render(" " + block.Content)
+	// Determine icon and style based on tool category
+	icon := iconToolCall
+	var iconSty lipgloss.Style
+	categoryLabel := ""
+
+	if block.ToolMeta != nil {
+		switch block.ToolMeta.ToolType {
+		case ToolCategoryRead:
+			icon = iconToolRead
+			iconSty = toolCategoryReadStyle
+			categoryLabel = toolCategoryReadStyle.Render("[READ]  ")
+		case ToolCategoryWrite:
+			icon = iconToolWrite
+			iconSty = toolCategoryWriteStyle
+			categoryLabel = toolCategoryWriteStyle.Render("[WRITE] ")
+		case ToolCategoryExecute:
+			icon = iconToolExec
+			iconSty = toolCategoryExecStyle
+			categoryLabel = toolCategoryExecStyle.Render("[EXEC]  ")
+		default:
+			iconSty = toolCallStyle
+		}
+		// Show spinner if tool is still running
+		if block.ToolMeta.IsRunning {
+			icon = GetSpinnerFrame(m.spinnerFrame)
+			iconSty = spinnerStyle
+		}
+	} else {
+		iconSty = toolCallStyle
 	}
-	return icon + name + desc
+
+	rendered := iconSty.Render(icon) + " " + categoryLabel + toolNameStyle.Render(block.ToolName)
+	if block.Content != "" {
+		rendered += toolDescStyle.Render("  " + block.Content)
+	}
+	return rendered
 }
 
-// renderToolResultBlock renders a tool execution result
+// renderToolResultBlock renders a tool execution result with elapsed time
 func (m Model) renderToolResultBlock(block ContentBlock) string {
 	var b strings.Builder
 
@@ -591,12 +641,30 @@ func (m Model) renderToolResultBlock(block ContentBlock) string {
 		name := toolResultSuccessStyle.Render(block.ToolName)
 		b.WriteString(icon + name)
 
+		// Show elapsed time if available
+		if block.ToolMeta != nil && block.ToolMeta.Elapsed > 0 {
+			b.WriteString(" " + toolElapsedStyle.Render("("+formatDuration(block.ToolMeta.Elapsed)+")"))
+		}
+
 		// Render result if present
 		if block.Content != "" && block.Content != "(no output)" {
 			b.WriteString("\n")
-			// Render markdown for rich tool output (vecgrep, etc.)
+			// Indent result content for visual grouping
 			rendered := renderMarkdown(block.Content)
-			b.WriteString(rendered)
+			// Add 2-space indent to each line
+			for i, line := range strings.Split(rendered, "\n") {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString("  " + line)
+			}
+
+			// Show truncation indicator if result was truncated
+			if block.ToolMeta != nil && block.ToolMeta.ResultLen > 500 {
+				b.WriteString("\n")
+				b.WriteString("  " + toolTruncIndicatorStyle.Render(
+					fmt.Sprintf("▸ %s total (showing first 500)", formatByteCount(block.ToolMeta.ResultLen))))
+			}
 		}
 	}
 

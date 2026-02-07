@@ -65,6 +65,92 @@ type ContentBlock struct {
 	Content  string
 	ToolName string
 	IsError  bool
+	ToolMeta *ToolBlockMeta // Metadata for tool blocks (optional)
+}
+
+// AgentMode represents the current operating mode of the agent
+type AgentMode int
+
+const (
+	ModeAsk   AgentMode = iota // Q&A, read-only exploration
+	ModePlan                   // Design & explore, writes prompt
+	ModeBuild                  // Full execution
+)
+
+// String returns the display name of the mode
+func (m AgentMode) String() string {
+	switch m {
+	case ModeAsk:
+		return "Ask"
+	case ModePlan:
+		return "Plan"
+	case ModeBuild:
+		return "Build"
+	default:
+		return "Unknown"
+	}
+}
+
+// Next returns the next mode in the cycle: Ask → Plan → Build → Ask
+func (m AgentMode) Next() AgentMode {
+	return (m + 1) % 3
+}
+
+// ToolCategory classifies a tool by its effect
+type ToolCategory int
+
+const (
+	ToolCategoryRead    ToolCategory = iota // Read-only tools
+	ToolCategoryWrite                       // File-modifying tools
+	ToolCategoryExecute                     // Command execution tools
+)
+
+// String returns the display label for the category
+func (c ToolCategory) String() string {
+	switch c {
+	case ToolCategoryRead:
+		return "READ"
+	case ToolCategoryWrite:
+		return "WRITE"
+	case ToolCategoryExecute:
+		return "EXEC"
+	default:
+		return "TOOL"
+	}
+}
+
+// ToolBlockMeta holds metadata for tool call visualization
+type ToolBlockMeta struct {
+	ToolType  ToolCategory
+	StartTime time.Time
+	EndTime   time.Time
+	Elapsed   time.Duration
+	IsRunning bool
+	GroupID   string // Links tool_call to tool_result
+	ResultLen int    // Original length before truncation
+}
+
+// classifyTool returns the category for a given tool name
+func classifyTool(name string) ToolCategory {
+	switch name {
+	case "read_file", "list_files", "grep", "ast_parse", "lsp_query",
+		"vecgrep_search", "vecgrep_similar", "vecgrep_status",
+		"vecgrep_overview", "vecgrep_related_files":
+		return ToolCategoryRead
+	case "write_file", "edit_file":
+		return ToolCategoryWrite
+	case "bash":
+		return ToolCategoryExecute
+	default:
+		// Default: if name contains "read", "list", "search", "get" → read
+		lower := strings.ToLower(name)
+		if strings.Contains(lower, "read") || strings.Contains(lower, "list") ||
+			strings.Contains(lower, "search") || strings.Contains(lower, "get") ||
+			strings.Contains(lower, "status") {
+			return ToolCategoryRead
+		}
+		return ToolCategoryWrite // Default to write for unknown tools (safer)
+	}
 }
 
 // PermissionResult represents the user's permission decision
@@ -74,8 +160,9 @@ type PermissionResult struct {
 
 // modelCallbacks holds callbacks that need to survive model copies
 type modelCallbacks struct {
-	onSubmit func(string)
-	onReady  func()
+	onSubmit     func(string)
+	onReady      func()
+	onModeChange func(AgentMode)
 }
 
 // Model is the main Bubble Tea model for the TUI
@@ -144,9 +231,14 @@ type Model struct {
 	inputQueue   []string
 	maxQueueSize int
 
-	// Architect mode state
-	architectMode    bool   // Whether in architect mode
-	architectSubMode string // "plan" or "chat" (toggle with shift+tab)
+	// Agent mode state
+	agentMode AgentMode // Current mode: Ask, Plan, Build
+
+	// Autocomplete
+	completer *Completer // Slash command autocomplete (pointer survives model copies)
+
+	// Tool visualization
+	activeTools map[string]*ToolBlockMeta // Track running tools by GroupID
 }
 
 // NewModel creates a new TUI model
@@ -179,6 +271,9 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		inputQueue:    make([]string, 0, 10),
 		maxQueueSize:  10,
 		callbacks:     &modelCallbacks{}, // Pointer survives copy to tea.Program
+		agentMode:     ModeBuild,         // Default to full execution mode
+		completer:     NewCompleter(),    // Pointer survives model copies
+		activeTools:   make(map[string]*ToolBlockMeta),
 	}
 }
 
@@ -337,34 +432,28 @@ func (m *Model) ClearQueue() {
 	m.inputQueue = m.inputQueue[:0]
 }
 
-// SetArchitectMode enables or disables architect mode
-func (m *Model) SetArchitectMode(enabled bool) {
-	m.architectMode = enabled
-	if enabled {
-		m.architectSubMode = "chat" // Start in chat mode
-	} else {
-		m.architectSubMode = ""
+// SetAgentMode sets the current agent mode
+func (m *Model) SetAgentMode(mode AgentMode) {
+	m.agentMode = mode
+}
+
+// GetAgentMode returns the current agent mode
+func (m *Model) GetAgentMode() AgentMode {
+	return m.agentMode
+}
+
+// CycleAgentMode advances to the next mode: Ask → Plan → Build → Ask
+func (m *Model) CycleAgentMode() AgentMode {
+	m.agentMode = m.agentMode.Next()
+	if m.callbacks != nil && m.callbacks.onModeChange != nil {
+		m.callbacks.onModeChange(m.agentMode)
 	}
+	return m.agentMode
 }
 
-// IsArchitectMode returns whether architect mode is active
-func (m *Model) IsArchitectMode() bool {
-	return m.architectMode
-}
-
-// GetArchitectSubMode returns the current sub-mode ("plan" or "chat")
-func (m *Model) GetArchitectSubMode() string {
-	return m.architectSubMode
-}
-
-// ToggleArchitectSubMode switches between plan and chat sub-modes
-func (m *Model) ToggleArchitectSubMode() string {
-	if m.architectSubMode == "plan" {
-		m.architectSubMode = "chat"
-	} else {
-		m.architectSubMode = "plan"
-	}
-	return m.architectSubMode
+// SetModeChangeCallback sets the callback for mode changes
+func (m *Model) SetModeChangeCallback(fn func(AgentMode)) {
+	m.callbacks.onModeChange = fn
 }
 
 // GetConversationText returns the conversation as plain text for copying
