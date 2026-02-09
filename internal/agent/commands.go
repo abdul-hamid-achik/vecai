@@ -9,7 +9,6 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/logging"
-	"github.com/abdul-hamid-achik/vecai/internal/permissions"
 	"github.com/abdul-hamid-achik/vecai/internal/session"
 	"github.com/abdul-hamid-achik/vecai/internal/tui"
 )
@@ -384,27 +383,8 @@ func (ch *CommandHandler) newSession(output AgentOutput, cmdCtx CommandContext) 
 func (ch *CommandHandler) switchMode(mode tui.AgentMode, output AgentOutput, cmdCtx CommandContext) {
 	a := ch.agent
 	oldMode := a.agentMode
-	a.agentMode = mode
+	a.applyModeChange(mode, true)
 	cmdCtx.SetAgentMode(mode)
-
-	// Update permissions based on mode
-	switch mode {
-	case tui.ModeAsk:
-		if a.previousPermMode == 0 {
-			a.previousPermMode = a.permissions.GetMode()
-		}
-		a.permissions.SetMode(permissions.ModeAnalysis) // Reads auto, writes blocked
-	case tui.ModePlan:
-		if a.previousPermMode == 0 {
-			a.previousPermMode = a.permissions.GetMode()
-		}
-		a.permissions.SetMode(permissions.ModeAsk) // Reads auto, writes prompt
-	case tui.ModeBuild:
-		if a.previousPermMode != 0 {
-			a.permissions.SetMode(a.previousPermMode) // Restore original
-			a.previousPermMode = 0
-		}
-	}
 
 	var desc string
 	switch mode {

@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/permissions"
+	"github.com/abdul-hamid-achik/vecai/internal/tui"
 )
 
 func TestNew(t *testing.T) {
@@ -126,6 +129,116 @@ func TestMockLLMClientModel(t *testing.T) {
 	mock.SetModel("custom-model")
 	if mock.GetModel() != "custom-model" {
 		t.Errorf("expected %q, got %q", "custom-model", mock.GetModel())
+	}
+}
+
+func TestApplyModeChange(t *testing.T) {
+	a, _ := newTestAgent(t)
+
+	// Agent starts with zero-value agentMode (ModeAsk).
+	// Set to Build so we can test switching away from it.
+	a.agentMode = tui.ModeBuild
+
+	// Switch to Ask — should save permissions and switch to ModeAnalysis
+	a.applyModeChange(tui.ModeAsk, false)
+	if a.agentMode != tui.ModeAsk {
+		t.Errorf("expected ModeAsk, got %v", a.agentMode)
+	}
+	if a.permissions.GetMode() != permissions.ModeAnalysis {
+		t.Errorf("expected ModeAnalysis permission, got %v", a.permissions.GetMode())
+	}
+	if a.previousPermMode == 0 {
+		t.Error("previousPermMode should be saved when switching to Ask")
+	}
+
+	// Switch to Plan
+	a.applyModeChange(tui.ModePlan, false)
+	if a.agentMode != tui.ModePlan {
+		t.Errorf("expected ModePlan, got %v", a.agentMode)
+	}
+	if a.permissions.GetMode() != permissions.ModeAsk {
+		t.Errorf("expected ModeAsk permission for Plan mode, got %v", a.permissions.GetMode())
+	}
+
+	// Switch to Build — should restore original permissions
+	a.applyModeChange(tui.ModeBuild, false)
+	if a.agentMode != tui.ModeBuild {
+		t.Errorf("expected ModeBuild, got %v", a.agentMode)
+	}
+	if a.previousPermMode != 0 {
+		t.Error("previousPermMode should be cleared after restoring Build mode")
+	}
+
+	// No-op: switching to same mode shouldn't change anything
+	a.agentMode = tui.ModeAsk
+	a.applyModeChange(tui.ModeAsk, false)
+	// Should remain ModeAsk with no side effects
+	if a.agentMode != tui.ModeAsk {
+		t.Errorf("expected no change, got %v", a.agentMode)
+	}
+}
+
+func TestApplyModeChange_WithTierUpdate(t *testing.T) {
+	a, mock := newTestAgent(t)
+	a.autoTier = true
+	a.quickMode = false
+	a.agentMode = tui.ModeBuild // Start from Build
+
+	// Switch to Ask with tier update
+	a.applyModeChange(tui.ModeAsk, true)
+	if mock.CurrentTier != config.TierFast {
+		t.Errorf("expected TierFast for Ask mode, got %v", mock.CurrentTier)
+	}
+
+	// Switch to Plan with tier update
+	a.applyModeChange(tui.ModePlan, true)
+	if mock.CurrentTier != config.TierSmart {
+		t.Errorf("expected TierSmart for Plan mode, got %v", mock.CurrentTier)
+	}
+
+	// Switch to Build with tier update
+	a.applyModeChange(tui.ModeBuild, true)
+	if mock.CurrentTier != config.TierSmart {
+		t.Errorf("expected TierSmart for Build mode, got %v", mock.CurrentTier)
+	}
+}
+
+func TestSelectTierForMode(t *testing.T) {
+	a, _ := newTestAgent(t)
+
+	// In Ask mode, simple queries should get Fast tier
+	a.agentMode = tui.ModeAsk
+	tier := a.selectTierForMode("where is the router?")
+	if tier != config.TierFast {
+		t.Errorf("Ask mode simple query: expected TierFast, got %v", tier)
+	}
+
+	// In Plan mode, simple queries should be floored to Smart
+	a.agentMode = tui.ModePlan
+	tier = a.selectTierForMode("where is the router?")
+	if tier != config.TierSmart {
+		t.Errorf("Plan mode simple query: expected TierSmart (floor), got %v", tier)
+	}
+
+	// In Build mode, simple queries should be floored to Smart
+	a.agentMode = tui.ModeBuild
+	tier = a.selectTierForMode("where is the router?")
+	if tier != config.TierSmart {
+		t.Errorf("Build mode simple query: expected TierSmart (floor), got %v", tier)
+	}
+
+	// In Ask mode, complex queries should still get Genius tier
+	a.agentMode = tui.ModeAsk
+	tier = a.selectTierForMode("review the architecture for security issues")
+	if tier != config.TierGenius {
+		t.Errorf("Ask mode complex query: expected TierGenius, got %v", tier)
+	}
+
+	// In Plan mode, complex queries should still get Genius tier (above floor)
+	a.agentMode = tui.ModePlan
+	tier = a.selectTierForMode("review the architecture for security issues")
+	if tier != config.TierGenius {
+		t.Errorf("Plan mode complex query: expected TierGenius, got %v", tier)
 	}
 }
 

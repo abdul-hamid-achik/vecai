@@ -17,6 +17,9 @@ type MockLLMClient struct {
 	model string
 	mu    sync.Mutex
 
+	// CurrentTier records the last tier set via SetTier (for test assertions).
+	CurrentTier config.ModelTier
+
 	// Call recording
 	ChatCalls       []ChatCall
 	ChatStreamCalls []ChatStreamCall
@@ -92,9 +95,11 @@ func (m *MockLLMClient) SetModel(model string) {
 	m.model = model
 }
 
-// SetTier sets the model based on tier (ignored in mock).
-func (m *MockLLMClient) SetTier(_ config.ModelTier) {
-	// no-op for mock
+// SetTier records the tier for test assertions.
+func (m *MockLLMClient) SetTier(tier config.ModelTier) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.CurrentTier = tier
 }
 
 // GetModel returns the current model name.

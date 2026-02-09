@@ -243,6 +243,7 @@ func New(cfg Config) *Agent {
 		Permissions: cfg.Permissions,
 	})
 	a.router = NewTaskRouter(cfg.LLM, cfg.Config)
+	a.syncContextWindow()
 
 	// Wire up auto-save callback
 	if sessionMgr != nil {
@@ -318,10 +319,19 @@ func (a *Agent) runLineBased(query string) error {
 	// Track current query for smart tool selection
 	a.currentQuery = query
 
-	// Apply auto-tier selection if enabled
+	cliOut := &CLIOutput{Out: a.output, In: a.input}
+
+	// Auto-select mode based on intent classification
+	var intent Intent
+	if a.autoTier && !a.quickMode && !a.analysisMode {
+		intent = a.autoSelectMode(ctx, query, cliOut)
+	}
+
+	// Apply auto-tier selection if enabled (mode-aware: Smart floor for Plan/Build)
 	if a.autoTier && !a.quickMode {
-		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		selectedTier := a.selectTierForMode(query)
 		a.llm.SetTier(selectedTier)
+		a.syncContextWindow()
 		reason := a.tierSelector.GetTierReason(query)
 		logDebug("Auto-tier selected: %s (reason: %s)", selectedTier, reason)
 
@@ -335,14 +345,13 @@ func (a *Agent) runLineBased(query string) error {
 		}
 	}
 
-	// Route to pipeline for complex tasks when auto-tier is enabled
+	// Route to pipeline for complex tasks (reuse intent to avoid double classification)
 	if a.autoTier && !a.quickMode && !a.analysisMode {
-		intent := a.router.ClassifyIntent(ctx, query)
 		if a.router.ShouldUseMultiAgent(intent) {
 			a.llm.SetTier(a.router.GetRecommendedTier(intent))
-			cliOut := &CLIOutput{Out: a.output, In: a.input}
+			a.syncContextWindow()
 			cliOut.Info(fmt.Sprintf("Using multi-agent pipeline (intent: %s)", intent))
-			result, err := a.pipeline.Execute(ctx, query, cliOut)
+			result, err := a.pipeline.ExecuteWithIntent(ctx, query, intent, cliOut)
 			if err != nil {
 				return err
 			}
@@ -369,8 +378,7 @@ func (a *Agent) runLineBased(query string) error {
 	a.detectAndRecordCorrection(query)
 
 	originalQuery := query // Save for capture
-	cliOutput := &CLIOutput{Out: a.output, In: a.input}
-	err := a.runAgentLoop(ctx, cliOutput, cliOutput)
+	err := a.runAgentLoop(ctx, cliOut, cliOut)
 	if err != nil {
 		return err
 	}
@@ -404,24 +412,7 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 
 	// Wire up mode change callback so Shift+Tab updates agent state
 	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
-		a.agentMode = mode
-		switch mode {
-		case tui.ModeAsk:
-			if a.previousPermMode == 0 {
-				a.previousPermMode = a.permissions.GetMode()
-			}
-			a.permissions.SetMode(permissions.ModeAnalysis)
-		case tui.ModePlan:
-			if a.previousPermMode == 0 {
-				a.previousPermMode = a.permissions.GetMode()
-			}
-			a.permissions.SetMode(permissions.ModeAsk)
-		case tui.ModeBuild:
-			if a.previousPermMode != 0 {
-				a.permissions.SetMode(a.previousPermMode)
-				a.previousPermMode = 0
-			}
-		}
+		a.applyModeChange(mode, true)
 	})
 
 	// Set up the onReady callback to execute initial query
@@ -549,25 +540,7 @@ func (a *Agent) RunInteractiveTUI() error {
 
 	// Wire up mode change callback so Shift+Tab updates agent state
 	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
-		a.agentMode = mode
-		// Update permissions based on mode
-		switch mode {
-		case tui.ModeAsk:
-			if a.previousPermMode == 0 {
-				a.previousPermMode = a.permissions.GetMode()
-			}
-			a.permissions.SetMode(permissions.ModeAnalysis)
-		case tui.ModePlan:
-			if a.previousPermMode == 0 {
-				a.previousPermMode = a.permissions.GetMode()
-			}
-			a.permissions.SetMode(permissions.ModeAsk)
-		case tui.ModeBuild:
-			if a.previousPermMode != 0 {
-				a.permissions.SetMode(a.previousPermMode)
-				a.previousPermMode = 0
-			}
-		}
+		a.applyModeChange(mode, true)
 	})
 
 	// Set up the onReady callback
@@ -657,10 +630,21 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	// Track current query for smart tool selection
 	a.currentQuery = query
 
-	// Apply auto-tier selection if enabled
+	tuiOut := &TUIOutput{Adapter: adapter}
+
+	// Auto-select mode based on intent classification, then apply mode-aware tier
+	var intent Intent
+	if a.autoTier && !a.quickMode && !a.analysisMode {
+		intent = a.autoSelectMode(ctx, query, tuiOut)
+		// Sync TUI display with the (possibly changed) agent mode
+		adapter.SetAgentMode(a.agentMode)
+	}
+
+	// Apply auto-tier selection if enabled (mode-aware: Smart floor for Plan/Build)
 	if a.autoTier && !a.quickMode {
-		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		selectedTier := a.selectTierForMode(query)
 		a.llm.SetTier(selectedTier)
+		a.syncContextWindow()
 		reason := a.tierSelector.GetTierReason(query)
 		logDebug("Auto-tier selected: %s (reason: %s)", selectedTier, reason)
 
@@ -674,14 +658,13 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 		}
 	}
 
-	// Route to pipeline for complex tasks when auto-tier is enabled
+	// Route to pipeline for complex tasks (reuse intent to avoid double classification)
 	if a.autoTier && !a.quickMode && !a.analysisMode {
-		intent := a.router.ClassifyIntent(ctx, query)
 		if a.router.ShouldUseMultiAgent(intent) {
 			a.llm.SetTier(a.router.GetRecommendedTier(intent))
-			tuiOut := &TUIOutput{Adapter: adapter}
+			a.syncContextWindow()
 			tuiOut.Info(fmt.Sprintf("Using multi-agent pipeline (intent: %s)", intent))
-			result, err := a.pipeline.Execute(ctx, query, tuiOut)
+			result, err := a.pipeline.ExecuteWithIntent(ctx, query, intent, tuiOut)
 			if err != nil {
 				return err
 			}
@@ -708,8 +691,7 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 	// Detect and record corrections for learning
 	a.detectAndRecordCorrection(query)
 
-	tuiOutput := &TUIOutput{Adapter: adapter}
-	return a.runAgentLoop(ctx, tuiOutput, tuiOutput)
+	return a.runAgentLoop(ctx, tuiOut, tuiOut)
 }
 
 // RunPlan runs in plan mode
@@ -872,6 +854,11 @@ func (a *Agent) Close() error {
 		}
 	}
 
+	// Stop result cache cleanup goroutine
+	if a.resultCache != nil {
+		a.resultCache.Stop()
+	}
+
 	// Close memory layer
 	if a.memoryLayer != nil {
 		if err := a.memoryLayer.Close(); err != nil {
@@ -896,6 +883,79 @@ func (a *Agent) Close() error {
 	}
 
 	return nil
+}
+
+// applyModeChange consolidates mode switching logic: updates agent mode,
+// permissions, and optionally the model tier to match the new mode.
+func (a *Agent) applyModeChange(mode tui.AgentMode, updateTier bool) {
+	if a.agentMode == mode {
+		return
+	}
+	a.agentMode = mode
+
+	// Update permissions based on mode
+	switch mode {
+	case tui.ModeAsk:
+		if a.previousPermMode == 0 {
+			a.previousPermMode = a.permissions.GetMode()
+		}
+		a.permissions.SetMode(permissions.ModeAnalysis)
+	case tui.ModePlan:
+		if a.previousPermMode == 0 {
+			a.previousPermMode = a.permissions.GetMode()
+		}
+		a.permissions.SetMode(permissions.ModeAsk)
+	case tui.ModeBuild:
+		if a.previousPermMode != 0 {
+			a.permissions.SetMode(a.previousPermMode)
+			a.previousPermMode = 0
+		}
+	}
+
+	// Mode-based tier switching
+	if updateTier && a.autoTier && !a.quickMode {
+		switch mode {
+		case tui.ModeAsk:
+			a.llm.SetTier(config.TierFast)
+		case tui.ModePlan:
+			a.llm.SetTier(config.TierSmart)
+		case tui.ModeBuild:
+			a.llm.SetTier(config.TierSmart)
+		}
+		a.syncContextWindow()
+	}
+}
+
+// autoSelectMode classifies intent and auto-switches the agent mode.
+// Returns the classified intent for reuse by the caller.
+func (a *Agent) autoSelectMode(ctx context.Context, query string, output AgentOutput) Intent {
+	intent := a.router.ClassifyIntent(ctx, query)
+	recommendedMode, shouldSwitch := a.router.GetRecommendedMode(intent)
+	if !shouldSwitch || a.agentMode == recommendedMode {
+		return intent
+	}
+	a.applyModeChange(recommendedMode, false) // tier set separately by caller
+	if output != nil {
+		output.Info(fmt.Sprintf("Auto-switched to %s mode", recommendedMode.String()))
+	}
+	return intent
+}
+
+// selectTierForMode applies a Smart floor for Plan/Build modes.
+// This prevents using the Fast (1.5b) model for modes that need more capability.
+func (a *Agent) selectTierForMode(query string) config.ModelTier {
+	tier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+	if (a.agentMode == tui.ModePlan || a.agentMode == tui.ModeBuild) && tier == config.TierFast {
+		return config.TierSmart
+	}
+	return tier
+}
+
+// syncContextWindow updates the context manager's window size to match the current model.
+func (a *Agent) syncContextWindow() {
+	currentModel := a.llm.GetModel()
+	modelWindow := a.config.GetContextWindowForModel(currentModel)
+	a.contextMgr.SetContextWindow(modelWindow)
 }
 
 // logDebug logs a debug message using the new logging package.

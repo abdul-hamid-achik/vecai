@@ -7,6 +7,7 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/tui"
 )
 
 // Intent represents the classified user intent
@@ -206,6 +207,21 @@ func (r *TaskRouter) ShouldUseMultiAgent(intent Intent) bool {
 		return false
 	default:
 		return false
+	}
+}
+
+// GetRecommendedMode returns the recommended agent mode for an intent.
+// Returns the mode and whether a switch should happen (false for IntentSimple).
+func (r *TaskRouter) GetRecommendedMode(intent Intent) (tui.AgentMode, bool) {
+	switch intent {
+	case IntentQuestion:
+		return tui.ModeAsk, true
+	case IntentPlan, IntentReview:
+		return tui.ModePlan, true
+	case IntentCode, IntentDebug:
+		return tui.ModeBuild, true
+	default:
+		return 0, false // IntentSimple: don't switch
 	}
 }
 

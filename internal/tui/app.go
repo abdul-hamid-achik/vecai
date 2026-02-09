@@ -816,6 +816,12 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		}
 		m.updateViewportContent()
 		return m, m.waitForStream()
+
+	case "mode_change":
+		if msg.ModeInfo != nil {
+			m.agentMode = *msg.ModeInfo
+		}
+		return m, m.waitForStream()
 	}
 
 	return m, m.waitForStream()

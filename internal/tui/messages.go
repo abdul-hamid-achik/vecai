@@ -25,7 +25,7 @@ type RateLimitInfo struct {
 
 // StreamMsg represents a streaming message from the LLM
 type StreamMsg struct {
-	Type          string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info", "stats", "rate_limit", "rate_limit_clear", "context_stats"
+	Type          string // "text", "thinking", "done", "tool_call", "tool_result", "error", "info", "warning", "success", "permission", "clear", "model_info", "stats", "rate_limit", "rate_limit_clear", "context_stats", "mode_change"
 	Text          string
 	ToolName      string
 	ToolDesc      string
@@ -38,6 +38,7 @@ type StreamMsg struct {
 	ContextStats  *ContextStatsInfo // Context stats (only for "context_stats" type)
 	ProjectInfo   *ProjectInfo      // Project info (only for "project_info" type)
 	ProgressData  *ProgressInfo     // Progress info (only for "progress" type)
+	ModeInfo      *AgentMode        // Agent mode (only for "mode_change" type)
 }
 
 // TokenUsage represents token counts from API response
@@ -224,4 +225,9 @@ func NewPlanMsg(text string) StreamMsg {
 // NewPlanUpdateMsg updates an existing plan block with new content
 func NewPlanUpdateMsg(text string) StreamMsg {
 	return StreamMsg{Type: "plan_update", Text: text}
+}
+
+// NewModeChangeMsg creates a mode change message to sync TUI display
+func NewModeChangeMsg(mode AgentMode) StreamMsg {
+	return StreamMsg{Type: "mode_change", ModeInfo: &mode}
 }

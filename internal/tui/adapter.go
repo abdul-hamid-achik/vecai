@@ -285,6 +285,11 @@ func (a *TUIAdapter) ProgressClear() {
 	a.streamChan <- NewProgressClearMsg()
 }
 
+// SetAgentMode sends a mode change message to sync the TUI display
+func (a *TUIAdapter) SetAgentMode(mode AgentMode) {
+	a.streamChan <- NewModeChangeMsg(mode)
+}
+
 // SetProjectInfo updates the working directory and git branch in the header
 func (a *TUIAdapter) SetProjectInfo(workingDir, gitBranch string) {
 	a.streamChan <- NewProjectInfoMsg(ProjectInfo{

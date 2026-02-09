@@ -6,6 +6,7 @@ import (
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
+	"github.com/abdul-hamid-achik/vecai/internal/tui"
 )
 
 func newTestRouter(t *testing.T) (*TaskRouter, *llm.MockLLMClient) {
@@ -302,6 +303,35 @@ func TestGetRecommendedTier(t *testing.T) {
 			got := router.GetRecommendedTier(tt.intent)
 			if got != tt.want {
 				t.Errorf("GetRecommendedTier(%q) = %q, want %q", tt.intent, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetRecommendedMode(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	tests := []struct {
+		intent       Intent
+		wantMode     tui.AgentMode
+		wantShouldDo bool
+	}{
+		{IntentQuestion, tui.ModeAsk, true},
+		{IntentPlan, tui.ModePlan, true},
+		{IntentReview, tui.ModePlan, true},
+		{IntentCode, tui.ModeBuild, true},
+		{IntentDebug, tui.ModeBuild, true},
+		{IntentSimple, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.intent), func(t *testing.T) {
+			mode, shouldSwitch := router.GetRecommendedMode(tt.intent)
+			if shouldSwitch != tt.wantShouldDo {
+				t.Errorf("GetRecommendedMode(%q) shouldSwitch = %v, want %v", tt.intent, shouldSwitch, tt.wantShouldDo)
+			}
+			if shouldSwitch && mode != tt.wantMode {
+				t.Errorf("GetRecommendedMode(%q) mode = %v, want %v", tt.intent, mode, tt.wantMode)
 			}
 		})
 	}
