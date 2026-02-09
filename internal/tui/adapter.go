@@ -11,23 +11,25 @@ import (
 
 // TUIAdapter bridges the TUI with the agent's OutputHandler and InputHandler interfaces
 type TUIAdapter struct {
-	program       *tea.Program
-	streamChan    chan StreamMsg
-	resultChan    chan PermissionResult
-	interruptChan chan struct{}
-	useColors     bool
-	lastGroupID   string // Links ToolCall to ToolResult
-	groupCounter  int    // Monotonically increasing group ID
+	program            *tea.Program
+	streamChan         chan StreamMsg
+	resultChan         chan PermissionResult
+	interruptChan      chan struct{}
+	forceInterruptChan chan struct{}
+	useColors          bool
+	lastGroupID        string // Links ToolCall to ToolResult
+	groupCounter       int    // Monotonically increasing group ID
 }
 
 // NewTUIAdapter creates a new TUI adapter
-func NewTUIAdapter(program *tea.Program, streamChan chan StreamMsg, resultChan chan PermissionResult, interruptChan chan struct{}) *TUIAdapter {
+func NewTUIAdapter(program *tea.Program, streamChan chan StreamMsg, resultChan chan PermissionResult, interruptChan chan struct{}, forceInterruptChan chan struct{}) *TUIAdapter {
 	return &TUIAdapter{
-		program:       program,
-		streamChan:    streamChan,
-		resultChan:    resultChan,
-		interruptChan: interruptChan,
-		useColors:     true,
+		program:            program,
+		streamChan:         streamChan,
+		resultChan:         resultChan,
+		interruptChan:      interruptChan,
+		forceInterruptChan: forceInterruptChan,
+		useColors:          true,
 	}
 }
 
@@ -71,6 +73,11 @@ func (a *TUIAdapter) UpdateStats(stats SessionStats) {
 // GetInterruptChan returns the interrupt channel for ESC handling
 func (a *TUIAdapter) GetInterruptChan() <-chan struct{} {
 	return a.interruptChan
+}
+
+// GetForceInterruptChan returns the force interrupt channel (second ESC)
+func (a *TUIAdapter) GetForceInterruptChan() <-chan struct{} {
+	return a.forceInterruptChan
 }
 
 // ToolCall outputs a tool call notification
@@ -256,6 +263,34 @@ func (a *TUIAdapter) UpdateContextStats(usagePercent float64, usedTokens, contex
 // SetSessionID updates the session ID display in the header
 func (a *TUIAdapter) SetSessionID(sessionID string) {
 	a.streamChan <- NewSessionIDMsg(sessionID)
+}
+
+// Plan sends a plan block that will be Glamour-rendered in the TUI
+func (a *TUIAdapter) Plan(text string) {
+	a.streamChan <- NewPlanMsg(text)
+}
+
+// PlanUpdate updates the existing plan block with new content (e.g., step checkmarks)
+func (a *TUIAdapter) PlanUpdate(text string) {
+	a.streamChan <- NewPlanUpdateMsg(text)
+}
+
+// Progress sends a progress update for known-length operations
+func (a *TUIAdapter) Progress(current, total int, description string) {
+	a.streamChan <- NewProgressMsg(current, total, description)
+}
+
+// ProgressClear clears the progress bar
+func (a *TUIAdapter) ProgressClear() {
+	a.streamChan <- NewProgressClearMsg()
+}
+
+// SetProjectInfo updates the working directory and git branch in the header
+func (a *TUIAdapter) SetProjectInfo(workingDir, gitBranch string) {
+	a.streamChan <- NewProjectInfoMsg(ProjectInfo{
+		WorkingDir: workingDir,
+		GitBranch:  gitBranch,
+	})
 }
 
 // WaitForRateLimit implements a TUI-compatible wait callback for rate limiting.

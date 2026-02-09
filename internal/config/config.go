@@ -33,6 +33,46 @@ type OllamaConfig struct {
 	ModelSmart  string `yaml:"model_smart"`  // Default: "qwen2.5-coder:7b"
 	ModelGenius string `yaml:"model_genius"` // Default: "cogito:14b"
 	KeepAlive   string `yaml:"keep_alive"`   // Default: "5m"
+	NumCtx      int    `yaml:"num_ctx"`      // Explicit num_ctx override (0 = use model default)
+	NumThread   int    `yaml:"num_thread"`   // Explicit num_thread override (0 = Ollama default)
+}
+
+// ModelContextWindows maps model name patterns to their maximum context window sizes.
+// These caps prevent over-allocation of VRAM by ensuring num_ctx never exceeds what
+// the model actually supports.
+var ModelContextWindows = map[string]int{
+	"llama3.2:3b":  4096,
+	"llama3.2:1b":  4096,
+	"qwen3:8b":     8192,
+	"qwen3:14b":    32768,
+	"qwen3:4b":     8192,
+	"qwen3:1.7b":   4096,
+	"cogito:14b":   32768,
+	"cogito:8b":    8192,
+}
+
+// GetContextWindowForModel returns the appropriate context window for a given model.
+// It uses the model-specific limit if known, otherwise falls back to the config default.
+// The returned value is always the minimum of the config setting and the model's actual limit.
+func (c *Config) GetContextWindowForModel(model string) int {
+	configWindow := c.Context.ContextWindow
+	if configWindow <= 0 {
+		configWindow = 8192
+	}
+
+	// Check for explicit num_ctx override first
+	if c.Ollama.NumCtx > 0 {
+		configWindow = c.Ollama.NumCtx
+	}
+
+	// Cap at model-specific limit if known
+	if modelMax, ok := ModelContextWindows[model]; ok {
+		if configWindow > modelMax {
+			return modelMax
+		}
+	}
+
+	return configWindow
 }
 
 // AgentConfig holds multi-agent configuration

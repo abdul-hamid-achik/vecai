@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
@@ -32,6 +33,8 @@ STRATEGY: vecgrep_search first, then read_file for context
 Be concise. Cite file:line in answers.`
 
 const systemPrompt = `You are vecai, an AI-powered codebase assistant. You help developers understand, navigate, and modify their code.
+
+CRITICAL: You are an autonomous agent. ALWAYS use tools directly to find information. NEVER ask the user to run a tool or command for you. If one tool returns no results, try a different tool or query.
 
 ## Available Tools
 - vecgrep_search: Semantic search using vector embeddings (PREFERRED for exploration)
@@ -569,6 +572,20 @@ func (a *Agent) RunInteractiveTUI() error {
 
 	// Set up the onReady callback
 	runner.SetOnReady(func() {
+		// Send project context (working directory + git branch) for header
+		if wd, err := os.Getwd(); err == nil {
+			homeDir, _ := os.UserHomeDir()
+			shortDir := wd
+			if homeDir != "" && strings.HasPrefix(wd, homeDir) {
+				shortDir = "~" + wd[len(homeDir):]
+			}
+			branch := ""
+			if out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+				branch = strings.TrimSpace(string(out))
+			}
+			adapter.SetProjectInfo(shortDir, branch)
+		}
+
 		// Show non-blocking session hint if available
 		if pendingSession != nil {
 			preview := ""

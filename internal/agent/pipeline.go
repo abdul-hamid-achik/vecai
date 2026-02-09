@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/abdul-hamid-achik/vecai/internal/config"
 	"github.com/abdul-hamid-achik/vecai/internal/debug"
@@ -96,8 +97,31 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 	// Log plan creation to debug tracer
 	debug.PlanCreated(plan.Goal, len(plan.Steps))
 
-	// Show plan
-	output.TextLn(p.planner.FormatPlan(plan))
+	// Show plan (use Glamour-rendered plan block if supported, else plain text)
+	planText := p.planner.FormatPlan(plan)
+	if ps, ok := output.(PlanSupport); ok {
+		ps.Plan(planText)
+	} else {
+		output.TextLn(planText)
+	}
+
+	// Gate: require user approval before executing the plan.
+	// In TUI mode, we must send PermissionPrompt first to put the TUI into
+	// StatePermission before blocking on ReadLine (which waits on resultChan).
+	// Without PermissionPrompt, the TUI never shows the approval dialog and deadlocks.
+	if inp, ok := output.(AgentInput); ok {
+		output.PermissionPrompt("plan", tools.PermissionWrite, "Execute this plan? (y to confirm, n to cancel)")
+		response, err := inp.ReadLine("")
+		if err != nil {
+			output.Info("Plan execution cancelled")
+			return result, nil
+		}
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response != "y" && response != "yes" {
+			output.Info("Plan execution cancelled")
+			return result, nil
+		}
+	}
 
 	// Step 2: Execute steps
 	var previousContext string
@@ -120,7 +144,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 		// Log step start
 		debug.StepStart(step.ID, step.Description)
 
-		output.Info(fmt.Sprintf("Executing: %s", step.Description))
+		output.Info(fmt.Sprintf("Executing: %s", cleanStepDescription(step.Description)))
 
 		// Try step with retries
 		var execResult *ExecutionResult
@@ -154,6 +178,11 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 			if execResult.Success {
 				p.planner.MarkStepDone(plan, step.ID)
 				debug.StepComplete(step.ID, true, nil)
+				output.Success(fmt.Sprintf("Completed: %s", cleanStepDescription(step.Description)))
+				// Update plan display with new checkmarks
+				if ps, ok := output.(PlanSupport); ok {
+					ps.PlanUpdate(p.planner.FormatPlan(plan))
+				}
 				previousContext += fmt.Sprintf("\n--- Step %s completed ---\n%s\n", step.ID, execResult.Output)
 			} else {
 				debug.StepComplete(step.ID, false, lastErr)

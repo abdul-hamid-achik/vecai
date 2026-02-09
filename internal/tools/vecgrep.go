@@ -727,7 +727,12 @@ func (t *VecgrepInitTool) Execute(ctx context.Context, input map[string]any) (st
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("vecgrep init failed: %s", stderr.String())
+		stderrStr := stderr.String()
+		// "already initialized" is not an error — just means we're good to go
+		if strings.Contains(stderrStr, "already initialized") {
+			return "vecgrep already initialized.", nil
+		}
+		return "", fmt.Errorf("vecgrep init failed: %s", stderrStr)
 	}
 
 	output := stdout.String()

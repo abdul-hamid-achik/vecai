@@ -16,6 +16,7 @@ var _ AgentOutput = (*TUIOutput)(nil)
 var _ AgentInput = (*TUIOutput)(nil)
 var _ InterruptSupport = (*TUIOutput)(nil)
 var _ StatsSupport = (*TUIOutput)(nil)
+var _ PlanSupport = (*TUIOutput)(nil)
 
 // --- AgentOutput: Streaming ---
 
@@ -78,5 +79,10 @@ func (t *TUIOutput) UpdateContextStats(usagePercent float64, usedTokens, context
 }
 
 func (t *TUIOutput) SetSessionID(sessionID string) { t.Adapter.SetSessionID(sessionID) }
+
+// --- PlanSupport ---
+
+func (t *TUIOutput) Plan(text string)       { t.Adapter.Plan(text) }
+func (t *TUIOutput) PlanUpdate(text string)  { t.Adapter.PlanUpdate(text) }
 func (t *TUIOutput) UpdateStats(stats tui.SessionStats) { t.Adapter.UpdateStats(stats) }
 func (t *TUIOutput) Clear()                             { t.Adapter.Clear() }

@@ -189,17 +189,21 @@ func (p *PlannerAgent) buildSystemPrompt() string {
 Your role is to:
 1. Break down complex goals into discrete, achievable steps
 2. Identify dependencies between steps
-3. Consider risks and make assumptions explicit
-4. Ensure each step is small enough to complete in one turn
+3. Ensure each step is small enough to complete in one turn
 
 Guidelines:
-- Each step should do ONE thing well
-- "read" steps gather information
-- "code" steps write or modify code
-- "test" steps verify changes work
-- "verify" steps ensure quality
+- Create 3-7 steps maximum. Focused plans execute better than sprawling ones.
+- Each step must reference SPECIFIC file paths (e.g., "Edit internal/auth/handler.go to add JWT validation")
+- Do NOT include generic filler steps like "Analyze codebase", "Understand requirements", or "Review architecture"
+- Every step should produce a concrete, verifiable outcome
+- "read" steps gather information from specific files
+- "code" steps write or modify specific files
+- "test" steps run specific test commands
+- "verify" steps check specific outcomes (e.g., "Run go build to verify compilation")
 - Dependencies should form a valid DAG (no cycles)
-- Be specific about which files will be touched
+
+Example of a GOOD step: "Edit internal/server/router.go to add GET /api/health endpoint returning 200 OK"
+Example of a BAD step: "Analyze the existing codebase structure and understand the architecture"
 
 Always respond with valid JSON.`
 }
@@ -226,6 +230,10 @@ func (p *PlannerAgent) getReadOnlyTools() []llm.ToolDefinition {
 
 func (p *PlannerAgent) parsePlan(content string) (*StructuredPlan, error) {
 	// Try to extract JSON from the response
+	content = strings.TrimSpace(content)
+
+	// Strip <think>...</think> tags (some models wrap reasoning in these)
+	content = stripThinkTags(content)
 	content = strings.TrimSpace(content)
 
 	// Strip markdown code fences (```json ... ``` or ``` ... ```)
@@ -287,20 +295,58 @@ func stripMarkdownFences(content string) string {
 func (p *PlannerAgent) buildFallbackPlan(goal, content string) *StructuredPlan {
 	content = strings.TrimSpace(content)
 
+	// Strip <think>...</think> tags (some models like Qwen3 use reasoning tags)
+	content = stripThinkTags(content)
+	content = strings.TrimSpace(content)
+
 	// Try lenient JSON parse: the content might be JSON with goal/steps but failed strict parse
 	content = stripMarkdownFences(content)
-	if looksLikeJSON(content) {
-		// Try to extract goal/summary from JSON-like content
+
+	// Extract JSON substring — LLMs often add text before/after JSON objects.
+	// This mirrors the extraction logic in parsePlan (find first '{', last '}').
+	jsonStr := extractJSONSubstring(content)
+	if jsonStr != "" {
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(content), &raw); err == nil {
-			if summary, ok := raw["summary"].(string); ok {
-				steps := extractStepsFromJSON(raw)
-				if len(steps) > 0 {
-					return &StructuredPlan{
-						Goal:    goal,
-						Summary: summary,
-						Steps:   steps,
-					}
+		if err := json.Unmarshal([]byte(jsonStr), &raw); err == nil {
+			summary, _ := raw["summary"].(string)
+
+			// Try to extract steps from the JSON structure
+			steps := extractStepsFromJSON(raw)
+			if len(steps) > 0 {
+				if summary == "" {
+					summary = "Plan extracted from response"
+				}
+				return &StructuredPlan{
+					Goal:    goal,
+					Summary: summary,
+					Steps:   steps,
+				}
+			}
+
+			// No steps array — maybe the JSON itself is a single tool-call-like object
+			// e.g. {"name": "analyze_codebase", "parameters": {...}}
+			if name, ok := raw["name"].(string); ok {
+				desc := humanizeName(name)
+				if summary == "" {
+					summary = desc
+				}
+				return &StructuredPlan{
+					Goal:    goal,
+					Summary: summary,
+					Steps: []PlanStep{
+						{ID: "step1", Description: desc, Type: "code"},
+					},
+				}
+			}
+
+			// Has a summary/goal but no steps — use summary as a step
+			if summary != "" {
+				return &StructuredPlan{
+					Goal:    goal,
+					Summary: summary,
+					Steps: []PlanStep{
+						{ID: "step1", Description: summary, Type: "code"},
+					},
 				}
 			}
 		}
@@ -348,6 +394,25 @@ func looksLikeJSON(content string) bool {
 	return strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")
 }
 
+// stripThinkTags removes <think>...</think> blocks from LLM output.
+// Some models (e.g., Qwen3) wrap reasoning in these tags.
+func stripThinkTags(content string) string {
+	re := regexp.MustCompile(`(?s)<think>.*?</think>`)
+	return strings.TrimSpace(re.ReplaceAllString(content, ""))
+}
+
+// extractJSONSubstring finds the first JSON object in a string by locating
+// the first '{' and last '}'. Returns empty string if no valid boundaries found.
+// This handles LLMs that add text before/after the JSON object.
+func extractJSONSubstring(content string) string {
+	start := strings.Index(content, "{")
+	end := strings.LastIndex(content, "}")
+	if start == -1 || end == -1 || start >= end {
+		return ""
+	}
+	return content[start : end+1]
+}
+
 // extractStepsFromJSON tries to pull steps from a loosely-typed JSON map
 func extractStepsFromJSON(raw map[string]interface{}) []PlanStep {
 	stepsRaw, ok := raw["steps"].([]interface{})
@@ -360,14 +425,17 @@ func extractStepsFromJSON(raw map[string]interface{}) []PlanStep {
 		case map[string]interface{}:
 			desc, _ := v["description"].(string)
 			if desc == "" {
-				desc, _ = v["name"].(string)
+				// Tool-call-like: {"name": "analyze_codebase", "parameters": {...}}
+				if name, ok := v["name"].(string); ok && name != "" {
+					desc = humanizeName(name)
+				}
 			}
 			if desc == "" {
 				continue
 			}
 			stepType, _ := v["type"].(string)
 			if stepType == "" {
-				stepType = "code"
+				stepType = inferStepType(desc)
 			}
 			steps = append(steps, PlanStep{
 				ID:          fmt.Sprintf("step%d", i+1),
@@ -383,6 +451,21 @@ func extractStepsFromJSON(raw map[string]interface{}) []PlanStep {
 		}
 	}
 	return steps
+}
+
+// inferStepType guesses the step type from the description text
+func inferStepType(desc string) string {
+	lower := strings.ToLower(desc)
+	switch {
+	case strings.Contains(lower, "read") || strings.Contains(lower, "analyze") || strings.Contains(lower, "explore") || strings.Contains(lower, "review"):
+		return "read"
+	case strings.Contains(lower, "test") || strings.Contains(lower, "run test"):
+		return "test"
+	case strings.Contains(lower, "verify") || strings.Contains(lower, "check") || strings.Contains(lower, "validate"):
+		return "verify"
+	default:
+		return "code"
+	}
 }
 
 // extractSummaryFromText extracts non-numbered text as a summary
@@ -416,6 +499,45 @@ func cleanFallbackDescription(content string) string {
 	return truncateDescription(content, 200)
 }
 
+// humanizeName converts a snake_case or camelCase name into a readable phrase.
+// e.g. "analyze_codebase" → "Analyze codebase"
+func humanizeName(name string) string {
+	name = strings.ReplaceAll(name, "_", " ")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Execute task"
+	}
+	// Capitalize first letter
+	runes := []rune(name)
+	runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+	return string(runes)
+}
+
+// cleanStepDescription ensures a step description is human-readable.
+// If it looks like raw JSON, extracts the meaningful parts.
+func cleanStepDescription(desc string) string {
+	trimmed := strings.TrimSpace(desc)
+	if !strings.HasPrefix(trimmed, "{") {
+		return desc
+	}
+	// Try to parse as JSON and extract readable fields
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return desc
+	}
+	// Try common human-readable fields
+	for _, key := range []string{"description", "summary", "goal", "task"} {
+		if v, ok := raw[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	// Try "name" field (tool-call-like objects)
+	if name, ok := raw["name"].(string); ok && name != "" {
+		return humanizeName(name)
+	}
+	return desc
+}
+
 // truncateDescription truncates a description to maxLen runes, adding ellipsis
 func truncateDescription(s string, maxLen int) string {
 	if utf8.RuneCountInString(s) <= maxLen {
@@ -432,33 +554,20 @@ func (p *PlannerAgent) FormatPlan(plan *StructuredPlan) string {
 	sb.WriteString(fmt.Sprintf("## Plan: %s\n\n", plan.Goal))
 	sb.WriteString(fmt.Sprintf("**Summary:** %s\n\n", plan.Summary))
 
-	sb.WriteString("### Steps\n")
-	for i, step := range plan.Steps {
+	sb.WriteString("### Steps\n\n")
+	for _, step := range plan.Steps {
 		status := "[ ]"
 		if step.Done {
 			status = "[x]"
 		}
-		desc := truncateDescription(step.Description, 200)
-		sb.WriteString(fmt.Sprintf("%d. %s **%s** (%s)\n", i+1, status, desc, step.Type))
+		desc := truncateDescription(cleanStepDescription(step.Description), 200)
+		// Use "- [ ]" / "- [x]" format for Glamour-compatible task lists
+		sb.WriteString(fmt.Sprintf("- %s **%s** (%s)\n", status, desc, step.Type))
 		if len(step.Files) > 0 {
-			sb.WriteString(fmt.Sprintf("   Files: %s\n", strings.Join(step.Files, ", ")))
+			sb.WriteString(fmt.Sprintf("  Files: %s\n", strings.Join(step.Files, ", ")))
 		}
 		if len(step.Dependencies) > 0 {
-			sb.WriteString(fmt.Sprintf("   Depends on: %s\n", strings.Join(step.Dependencies, ", ")))
-		}
-	}
-
-	if len(plan.Risks) > 0 {
-		sb.WriteString("\n### Risks\n")
-		for _, risk := range plan.Risks {
-			sb.WriteString(fmt.Sprintf("- %s\n", risk))
-		}
-	}
-
-	if len(plan.Assumptions) > 0 {
-		sb.WriteString("\n### Assumptions\n")
-		for _, assumption := range plan.Assumptions {
-			sb.WriteString(fmt.Sprintf("- %s\n", assumption))
+			sb.WriteString(fmt.Sprintf("  Depends on: %s\n", strings.Join(step.Dependencies, ", ")))
 		}
 	}
 

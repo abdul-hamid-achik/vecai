@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	rtdebug "runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,9 @@ import (
 var Version = "dev"
 
 func main() {
+	// Set Go runtime memory limit to 3GB to prevent unbounded growth
+	rtdebug.SetMemoryLimit(3 << 30)
+
 	// Check for --debug and --verbose flags early (before other parsing)
 	debugMode := os.Getenv("VECAI_DEBUG") == "1"
 	verboseMode := false

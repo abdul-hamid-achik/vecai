@@ -359,11 +359,18 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	}
 
 	// Replace
-	newContent := strings.Replace(string(content), oldText, newText, 1)
+	oldContent := string(content)
+	newContent := strings.Replace(oldContent, oldText, newText, 1)
 
 	// Write back
 	if err := os.WriteFile(absPath, []byte(newContent), 0644); err != nil {
 		return "", fmt.Errorf("failed to write file: %w", err)
+	}
+
+	// Generate unified diff for TUI visualization
+	diff := GenerateUnifiedDiff(path, oldContent, newContent, 3)
+	if diff != "" {
+		return fmt.Sprintf("Successfully edited %s\n\n%s", path, diff), nil
 	}
 
 	return fmt.Sprintf("Successfully edited %s", path), nil

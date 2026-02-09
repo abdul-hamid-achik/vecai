@@ -44,7 +44,7 @@ func Run(cfg RunConfig) error {
 	}
 
 	// Create stream channel
-	streamChan := make(chan StreamMsg, 100)
+	streamChan := make(chan StreamMsg, 500)
 
 	// Create model
 	model := NewModel(cfg.ModelName, streamChan)
@@ -56,7 +56,7 @@ func Run(cfg RunConfig) error {
 	)
 
 	// Create adapter
-	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan)
+	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan, model.forceInterruptChan)
 
 	// Set up submit callback
 	model.SetSubmitCallback(func(input string) {
@@ -120,7 +120,7 @@ type TUIRunner struct {
 // NewTUIRunner creates a new TUI runner
 func NewTUIRunner(modelName string) *TUIRunner {
 	logDebug("NewTUIRunner: creating with model=%s", modelName)
-	streamChan := make(chan StreamMsg, 100)
+	streamChan := make(chan StreamMsg, 500)
 	model := NewModel(modelName, streamChan)
 	logDebug("NewTUIRunner: model created, callbacks=%p", model.callbacks)
 
@@ -131,7 +131,7 @@ func NewTUIRunner(modelName string) *TUIRunner {
 	)
 	logDebug("NewTUIRunner: tea.Program created")
 
-	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan)
+	adapter := NewTUIAdapter(program, streamChan, model.resultChan, model.interruptChan, model.forceInterruptChan)
 
 	runner := &TUIRunner{
 		model:      &model,

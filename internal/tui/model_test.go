@@ -6,41 +6,29 @@ import (
 	"time"
 )
 
-// TestNewModelTextInputStyling verifies that the textinput has Nord theme styling applied
-func TestNewModelTextInputStyling(t *testing.T) {
+// TestNewModelTextAreaStyling verifies that the textarea has Nord theme styling applied
+func TestNewModelTextAreaStyling(t *testing.T) {
 	streamChan := make(chan StreamMsg, 10)
 	model := NewModel("test-model", streamChan)
 
-	// Verify textinput is initialized
-	if model.textInput.Placeholder != "Type message..." {
-		t.Errorf("Expected placeholder 'Type message...', got '%s'", model.textInput.Placeholder)
-	}
-
-	// Verify prompt is empty (we render our own)
-	if model.textInput.Prompt != "" {
-		t.Errorf("Expected empty prompt, got '%s'", model.textInput.Prompt)
+	// Verify textarea is initialized
+	if model.textArea.Placeholder != "Type message..." {
+		t.Errorf("Expected placeholder 'Type message...', got '%s'", model.textArea.Placeholder)
 	}
 
 	// Verify char limit is 0 (unlimited)
-	if model.textInput.CharLimit != 0 {
-		t.Errorf("Expected CharLimit 0, got %d", model.textInput.CharLimit)
+	if model.textArea.CharLimit != 0 {
+		t.Errorf("Expected CharLimit 0, got %d", model.textArea.CharLimit)
 	}
 
-	// Verify styling is applied (non-empty styles indicate configuration)
-	// Note: We can't directly compare lipgloss styles, but we verify they're set
-	cursorStyleStr := model.textInput.Cursor.Style.String()
-	if cursorStyleStr == "" {
-		t.Log("Warning: Cursor style appears empty (may be expected if no ANSI)")
+	// Verify max height
+	if model.textArea.MaxHeight != 5 {
+		t.Errorf("Expected MaxHeight 5, got %d", model.textArea.MaxHeight)
 	}
 
-	placeholderStyleStr := model.textInput.PlaceholderStyle.String()
-	if placeholderStyleStr == "" {
-		t.Log("Warning: PlaceholderStyle appears empty (may be expected if no ANSI)")
-	}
-
-	textStyleStr := model.textInput.TextStyle.String()
-	if textStyleStr == "" {
-		t.Log("Warning: TextStyle appears empty (may be expected if no ANSI)")
+	// Verify line numbers are hidden
+	if model.textArea.ShowLineNumbers {
+		t.Error("Expected ShowLineNumbers to be false")
 	}
 }
 

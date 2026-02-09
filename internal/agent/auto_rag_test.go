@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -214,7 +215,7 @@ func TestAutoRAGSearch_SkipConditions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := a.autoRAGSearch(tt.query)
+			got := a.autoRAGSearch(context.Background(), tt.query)
 			if got != "" {
 				t.Errorf("autoRAGSearch(%q) = %q, want empty (should skip)", tt.query, got)
 			}
@@ -240,7 +241,7 @@ func TestAutoRAGSearch_DoesNotSkipValidQueries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// We just verify it doesn't panic; the result may be "" if vecgrep
 			// is not installed, which is expected.
-			_ = a.autoRAGSearch(tt.query)
+			_ = a.autoRAGSearch(context.Background(), tt.query)
 		})
 	}
 }

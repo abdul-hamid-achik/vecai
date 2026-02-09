@@ -102,7 +102,12 @@ func NewOllamaClient(cfg *config.Config) *OllamaClient {
 		model:   cfg.GetDefaultModel(),
 		config:  cfg,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Minute, // Long timeout for generation
+			Timeout: 2 * time.Minute,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 5,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 	}
 }
@@ -210,6 +215,8 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 	ollamaMessages := c.buildMessages(messages, systemPrompt)
 	ollamaTools := c.buildTools(tools)
 
+	numCtx := c.config.GetContextWindowForModel(currentModel)
+
 	request := OllamaChatRequest{
 		Model:     currentModel,
 		Messages:  ollamaMessages,
@@ -219,7 +226,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 		Options: &OllamaOptions{
 			Temperature: c.config.Temperature,
 			NumPredict:  c.config.MaxTokens,
-			NumCtx:      c.config.Context.ContextWindow,
+			NumCtx:      numCtx,
 		},
 	}
 
@@ -333,6 +340,8 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		ollamaMessages := c.buildMessages(messages, systemPrompt)
 		ollamaTools := c.buildTools(tools)
 
+		numCtx := c.config.GetContextWindowForModel(currentModel)
+
 		request := OllamaChatRequest{
 			Model:     currentModel,
 			Messages:  ollamaMessages,
@@ -342,7 +351,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 			Options: &OllamaOptions{
 				Temperature: c.config.Temperature,
 				NumPredict:  c.config.MaxTokens,
-				NumCtx:      c.config.Context.ContextWindow,
+				NumCtx:      numCtx,
 			},
 		}
 

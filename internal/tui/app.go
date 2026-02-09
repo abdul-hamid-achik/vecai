@@ -59,7 +59,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			logAppDebug("First WindowSizeMsg - initializing TUI, callbacks=%p", m.callbacks)
 			// Initialize viewport
 			m.viewport = viewport.New(m.width, viewportHeight)
-			m.textInput.Width = m.width - 4
+			m.textArea.SetWidth(m.width - 4)
 			m.ready = true
 			m.state = StateIdle
 			m.spinnerActive = false
@@ -70,7 +70,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.viewport.Width = m.width
 			m.viewport.Height = viewportHeight
-			m.textInput.Width = m.width - 4
+			m.textArea.SetWidth(m.width - 4)
 		}
 
 		m.updateViewportContent()
@@ -82,12 +82,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		if m.spinnerActive {
 			m.spinnerFrame++
-			// Refresh viewport to animate tool call spinners
+			// Only re-render viewport if there are active tools with spinners
 			if len(m.activeTools) > 0 {
+				m.viewportDirty = true
+			}
+			// Batch viewport updates: only re-render if dirty
+			if m.viewportDirty {
 				m.updateViewportContent()
+				m.viewportDirty = false
 			}
 			return m, tickCmd()
 		}
+		return m, nil
+
+	case RenderTickMsg:
+		// Debounced render tick: render streaming markdown now if there's pending content
+		if m.streaming.Len() > 0 && m.streaming.Len() > m.lastRenderedLen {
+			m.renderedCache = renderMarkdown(m.streaming.String())
+			m.lastRenderedLen = m.streaming.Len()
+			m.lastRenderTime = time.Now()
+			m.updateViewportContent()
+			if !m.userScrolledUp {
+				m.scrollToBottom()
+			}
+		}
+		m.renderPending = false
 		return m, nil
 
 	case QuitMsg:
@@ -103,7 +122,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Update text input
-	m.textInput, cmd = m.textInput.Update(msg)
+	m.textArea, cmd = m.textArea.Update(msg)
 	cmds = append(cmds, cmd)
 
 	// Update viewport
@@ -145,15 +164,45 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Handle ESC during streaming or rate limiting - send interrupt signal
+	// Handle F1: toggle help overlay
+	if msg.Type == tea.KeyF1 {
+		m.showHelpOverlay = !m.showHelpOverlay
+		return m, nil
+	}
+
+	// ESC dismisses help overlay if shown
+	if msg.Type == tea.KeyEsc && m.showHelpOverlay {
+		m.showHelpOverlay = false
+		return m, nil
+	}
+
+	// Handle ESC during streaming or rate limiting — double-ESC interrupt
 	if msg.Type == tea.KeyEsc && (m.state == StateStreaming || m.state == StateRateLimited) {
-		// Non-blocking send to interrupt channel
+		now := time.Now()
+		if m.interruptPending && now.Sub(m.lastInterruptTime) < 3*time.Second {
+			// Second ESC within 3s → force stop: immediately reset to idle
+			select {
+			case m.forceInterruptChan <- struct{}{}:
+			default:
+			}
+			m.streaming.Reset()
+			m.renderedCache = ""
+			m.lastRenderedLen = 0
+			m.renderPending = false
+			m.activityMessage = ""
+			m.interruptPending = false
+			m.state = StateIdle
+			m.textArea.Focus()
+			return m, nil
+		}
+		// First ESC → graceful interrupt
 		select {
 		case m.interruptChan <- struct{}{}:
-			m.activityMessage = "Stopping..." // Immediate visual feedback
 		default:
-			// Channel full, interrupt already pending
 		}
+		m.interruptPending = true
+		m.lastInterruptTime = now
+		m.activityMessage = "Stopping... (ESC to force stop)"
 		return m, nil
 	}
 
@@ -163,10 +212,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "y", "Y", "n", "N", "a", "A", "v", "V":
 			// Handle permission keys immediately on keydown (lowercase the response)
+			m.permDetailsExpanded = false
 			return m.handlePermissionKey(string([]byte{key[0] | 0x20})) // convert to lowercase
+		case "d", "D":
+			// Toggle permission details
+			m.permDetailsExpanded = !m.permDetailsExpanded
+			return m, nil
 		}
 		// Treat Esc as deny
 		if msg.Type == tea.KeyEsc {
+			m.permDetailsExpanded = false
 			return m.handlePermissionKey("n")
 		}
 		// Ignore all other keys in permission state
@@ -186,15 +241,15 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Accept selection, fill input (don't submit)
 			accepted := m.completer.Accept()
 			if accepted != "" {
-				m.textInput.SetValue(accepted)
-				m.textInput.CursorEnd()
+				m.textArea.SetValue(accepted)
+				m.textArea.CursorEnd()
 			}
 			return m, nil
 		case tea.KeyEnter:
 			// Accept and submit
 			accepted := m.completer.Accept()
 			if accepted != "" {
-				m.textInput.Reset()
+				m.textArea.Reset()
 				if m.callbacks.onSubmit != nil {
 					go m.callbacks.onSubmit(accepted)
 				}
@@ -208,9 +263,28 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle viewport scrolling (arrow keys, page up/down, home/end)
 	switch msg.Type {
-	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+	case tea.KeyUp, tea.KeyPgUp, tea.KeyHome:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
+		// Track that user scrolled up
+		if !m.viewport.AtBottom() {
+			m.userScrolledUp = true
+		}
+		return m, cmd
+	case tea.KeyDown, tea.KeyPgDown:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		// Clear scroll-up state if we've reached the bottom
+		if m.viewport.AtBottom() {
+			m.userScrolledUp = false
+			m.newContentPending = false
+		}
+		return m, cmd
+	case tea.KeyEnd:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		m.userScrolledUp = false
+		m.newContentPending = false
 		return m, cmd
 	case tea.KeyShiftTab:
 		return m.handleModeCycle()
@@ -221,15 +295,104 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleModeCycle()
 	}
 
+	// Handle Ctrl+Y: copy last assistant response to clipboard
+	if msg.Type == tea.KeyCtrlY {
+		if text := getLastAssistantResponse(*m.blocks); text != "" {
+			if err := copyToClipboard(text); err != nil {
+				m.AddBlock(ContentBlock{Type: BlockWarning, Content: "Clipboard: " + err.Error()})
+			} else {
+				m.AddBlock(ContentBlock{Type: BlockSuccess, Content: "Copied last response to clipboard"})
+			}
+		} else {
+			m.AddBlock(ContentBlock{Type: BlockInfo, Content: "No assistant response to copy"})
+		}
+		return m, nil
+	}
+
+	// Handle Ctrl+K: copy last code block to clipboard
+	if msg.Type == tea.KeyCtrlK {
+		if code := getLastCodeBlock(*m.blocks); code != "" {
+			if err := copyToClipboard(code); err != nil {
+				m.AddBlock(ContentBlock{Type: BlockWarning, Content: "Clipboard: " + err.Error()})
+			} else {
+				lines := strings.Count(code, "\n") + 1
+				m.AddBlock(ContentBlock{Type: BlockSuccess, Content: fmt.Sprintf("Copied code block (%d lines) to clipboard", lines)})
+			}
+		} else {
+			m.AddBlock(ContentBlock{Type: BlockInfo, Content: "No code block to copy"})
+		}
+		return m, nil
+	}
+
+	// Handle Ctrl+T: toggle collapse/expand all tool blocks
+	if msg.Type == tea.KeyCtrlT {
+		m.toolsCollapsed = !m.toolsCollapsed
+		for i := range *m.blocks {
+			b := &(*m.blocks)[i]
+			if (b.Type == BlockToolResult && !b.IsError) || b.Type == BlockThinking {
+				b.Collapsed = m.toolsCollapsed
+				b.RenderedCache = "" // Invalidate cache on collapse toggle
+			}
+		}
+		m.updateViewportContent()
+		return m, nil
+	}
+
+	// Alt+Enter: insert a newline in textarea (multi-line input)
+	if msg.String() == "alt+enter" {
+		m.textArea.InsertString("\n")
+		// Recalculate footer height for multi-line
+		m.recalcFooterHeight()
+		return m, nil
+	}
+
+	// Handle Up/Down for history navigation when textarea is empty or single-line
+	if msg.Type == tea.KeyUp && m.textArea.Value() == "" && !m.completer.IsActive() {
+		if len(m.inputHistory) > 0 {
+			if m.historyIdx == -1 {
+				// Entering history mode: save current input
+				m.historySavedIn = m.textArea.Value()
+				m.historyIdx = 0
+			} else if m.historyIdx < len(m.inputHistory)-1 {
+				m.historyIdx++
+			}
+			m.textArea.SetValue(m.inputHistory[m.historyIdx])
+			m.textArea.CursorEnd()
+			return m, nil
+		}
+	}
+	if msg.Type == tea.KeyDown && m.historyIdx >= 0 && !m.completer.IsActive() {
+		m.historyIdx--
+		if m.historyIdx < 0 {
+			// Back to current (pre-history) input
+			m.historyIdx = -1
+			m.textArea.SetValue(m.historySavedIn)
+		} else {
+			m.textArea.SetValue(m.inputHistory[m.historyIdx])
+		}
+		m.textArea.CursorEnd()
+		return m, nil
+	}
+
 	// Handle normal input state
 	switch msg.Type {
 	case tea.KeyEnter:
-		input := m.textInput.Value()
+		input := strings.TrimSpace(m.textArea.Value())
 		if input == "" {
 			return m, nil
 		}
-		m.textInput.Reset()
+
+		// Add to history (prepend, cap at 50)
+		m.inputHistory = append([]string{input}, m.inputHistory...)
+		if len(m.inputHistory) > 50 {
+			m.inputHistory = m.inputHistory[:50]
+		}
+		m.historyIdx = -1
+
+		m.textArea.Reset()
+		m.textArea.SetHeight(1) // Reset to single line
 		m.completer.Dismiss()
+		m.recalcFooterHeight()
 
 		// Slash commands execute immediately (bypass queue)
 		if strings.HasPrefix(input, "/") {
@@ -277,28 +440,20 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Update text input for regular typing
+	// Update textarea for regular typing
 	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
+	m.textArea, cmd = m.textArea.Update(msg)
+
+	// Any edit exits history mode
+	if m.historyIdx >= 0 {
+		m.historyIdx = -1
+	}
 
 	// Update completer after each keystroke
-	m.completer.Update(m.textInput.Value())
+	m.completer.Update(m.textArea.Value())
 
-	// Recalculate viewport height when completer visibility changes
-	completerLines := 0
-	if m.completer.IsActive() {
-		visible := m.completer.VisibleCount()
-		if visible > m.completer.maxVisible {
-			visible = m.completer.maxVisible
-		}
-		completerLines = visible + 1 // +1 for the newline separator
-	}
-	newFooterHeight := 2 + completerLines
-	newViewportHeight := m.height - 1 - newFooterHeight - 2
-	if newViewportHeight > 0 && newViewportHeight != m.viewport.Height {
-		m.viewport.Height = newViewportHeight
-		m.updateViewportContent()
-	}
+	// Recalculate footer/viewport height
+	m.recalcFooterHeight()
 
 	return m, cmd
 }
@@ -329,7 +484,7 @@ func (m Model) handlePermissionKey(key string) (tea.Model, tea.Cmd) {
 	// more messages (tool results, text, done). Transition to idle happens
 	// when the "done" message arrives.
 	m.state = StateStreaming
-	m.textInput.Focus() // Restore focus so user can type while agent continues
+	m.textArea.Focus() // Restore focus so user can type while agent continues
 
 	return m, m.waitForStream()
 }
@@ -341,9 +496,38 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.state = StateStreaming
 		m.activityMessage = "Thinking..."
 		m.streaming.WriteString(msg.Text)
-		m.updateViewportContent()
-		m.scrollToBottom()
-		return m, tea.Batch(m.waitForStream(), startSpinner(&m))
+
+		// Debounced markdown rendering: only run Glamour every 150ms
+		cmds := []tea.Cmd{m.waitForStream(), startSpinner(&m)}
+		elapsed := time.Since(m.lastRenderTime)
+		if elapsed >= 150*time.Millisecond {
+			// Enough time passed — render now
+			m.renderedCache = renderMarkdown(m.streaming.String())
+			m.lastRenderedLen = m.streaming.Len()
+			m.lastRenderTime = time.Now()
+			m.renderPending = false
+			// Only update viewport on render boundaries, not every token
+			m.viewportDirty = true
+		} else if !m.renderPending {
+			// Schedule a deferred render
+			m.renderPending = true
+			m.viewportDirty = true
+			cmds = append(cmds, tea.Tick(150*time.Millisecond-elapsed, func(t time.Time) tea.Msg {
+				return RenderTickMsg{}
+			}))
+		}
+
+		// Defer viewport update to the next render tick instead of every token
+		if m.viewportDirty {
+			m.updateViewportContent()
+			m.viewportDirty = false
+		}
+		if m.userScrolledUp {
+			m.newContentPending = true
+		} else {
+			m.scrollToBottom()
+		}
+		return m, tea.Batch(cmds...)
 
 	case "thinking":
 		m.state = StateStreaming
@@ -363,6 +547,10 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 				Content: m.streaming.String(),
 			})
 			m.streaming.Reset()
+			// Clear render cache
+			m.renderedCache = ""
+			m.lastRenderedLen = 0
+			m.renderPending = false
 		}
 		// Accumulate token usage
 		if msg.Usage != nil {
@@ -386,7 +574,8 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
-		m.textInput.Focus() // Re-enable input for next query
+		m.interruptPending = false
+		m.textArea.Focus() // Re-enable input for next query
 		m.updateViewportContent()
 		return m, m.waitForStream()
 
@@ -439,6 +628,14 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 				callMeta.IsRunning = false
 				callMeta.EndTime = time.Now()
 				callMeta.Elapsed = callMeta.EndTime.Sub(callMeta.StartTime)
+				// Invalidate the tool_call block's cache since it stopped spinning
+				for i := range *m.blocks {
+					b := &(*m.blocks)[i]
+					if b.ToolMeta != nil && b.ToolMeta.GroupID == msg.GroupID {
+						b.RenderedCache = ""
+						break
+					}
+				}
 				resultMeta = &ToolBlockMeta{
 					ToolType:  callMeta.ToolType,
 					StartTime: callMeta.StartTime,
@@ -496,7 +693,8 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.state = StateIdle
 		m.spinnerActive = false
 		m.activityMessage = ""
-		m.textInput.Focus() // Re-enable input for next query
+		m.interruptPending = false
+		m.textArea.Focus() // Re-enable input for next query
 		return m, m.waitForStream()
 
 	case "info":
@@ -534,7 +732,9 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.permToolName = msg.ToolName
 		m.permLevel = msg.Level.String()
 		m.permDescription = msg.ToolDesc
-		m.textInput.Blur()
+		m.permDetailsExpanded = false
+		m.permFullContent = msg.ToolDesc
+		m.textArea.Blur()
 		return m, m.waitForStream()
 
 	case "clear":
@@ -566,7 +766,7 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 		m.rateLimitInfo = nil
 		m.state = StateIdle
 		m.activityMessage = ""
-		m.textInput.Focus() // Re-enable input
+		m.textArea.Focus() // Re-enable input
 		return m, m.waitForStream()
 
 	case "context_stats":
@@ -579,6 +779,43 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 	case "session_id":
 		m.sessionID = msg.Text
 		return m, m.waitForStream()
+
+	case "project_info":
+		if msg.ProjectInfo != nil {
+			m.workingDir = msg.ProjectInfo.WorkingDir
+			m.gitBranch = msg.ProjectInfo.GitBranch
+		}
+		return m, m.waitForStream()
+
+	case "progress":
+		m.progressInfo = msg.ProgressData
+		return m, m.waitForStream()
+
+	case "progress_clear":
+		m.progressInfo = nil
+		return m, m.waitForStream()
+
+	case "plan":
+		m.AddBlock(ContentBlock{
+			Type:    BlockPlan,
+			Content: msg.Text,
+		})
+		// Store the block's unique ID (stable across insertions/deletions)
+		m.planBlockID = (*m.blocks)[len(*m.blocks)-1].BlockID
+		m.updateViewportContent()
+		return m, m.waitForStream()
+
+	case "plan_update":
+		// Find plan block by stable ID instead of array index
+		for i := range *m.blocks {
+			if (*m.blocks)[i].BlockID == m.planBlockID {
+				(*m.blocks)[i].Content = msg.Text
+				(*m.blocks)[i].RenderedCache = "" // Invalidate cache for re-render
+				break
+			}
+		}
+		m.updateViewportContent()
+		return m, m.waitForStream()
 	}
 
 	return m, m.waitForStream()
@@ -589,6 +826,35 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return TickMsg{}
 	})
+}
+
+// recalcFooterHeight recalculates the footer height based on textarea and completer state
+func (m *Model) recalcFooterHeight() {
+	completerLines := 0
+	if m.completer.IsActive() {
+		visible := m.completer.VisibleCount()
+		if visible > m.completer.maxVisible {
+			visible = m.completer.maxVisible
+		}
+		completerLines = visible + 1 // +1 for separator
+	}
+	// Textarea height: min 1, max 5
+	taLines := m.textArea.LineCount()
+	if taLines < 1 {
+		taLines = 1
+	}
+	if taLines > 5 {
+		taLines = 5
+	}
+	m.textArea.SetHeight(taLines)
+
+	// Footer: 1 status bar + textarea lines + completer
+	newFooterHeight := 1 + taLines + completerLines
+	newViewportHeight := m.height - 1 - newFooterHeight - 2
+	if newViewportHeight > 0 && newViewportHeight != m.viewport.Height {
+		m.viewport.Height = newViewportHeight
+		m.updateViewportContent()
+	}
 }
 
 // startSpinner starts the spinner if not already active

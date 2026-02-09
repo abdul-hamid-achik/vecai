@@ -29,7 +29,8 @@ var (
 // Semantic color aliases for cleaner code
 var (
 	colorBgElevate = nord1
-	colorDim       = nord3
+	colorDim       = nord3  // Decorative only (borders, separators)
+	colorMuted     = nord4  // Readable subdued text (Snow Storm lightest)
 	colorText      = nord4
 	colorTextBold  = nord6
 	colorAccent    = nord8
@@ -55,7 +56,7 @@ var (
 				Foreground(colorAccent)
 
 	headerModelStyle = lipgloss.NewStyle().
-				Foreground(colorDim)
+				Foreground(colorMuted)
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// FOOTER & INPUT
@@ -73,7 +74,7 @@ var (
 	// STATUS BAR
 	// ═══════════════════════════════════════════════════════════════════════
 	statusBarStyle = lipgloss.NewStyle().
-			Foreground(colorDim).
+			Foreground(colorMuted).
 			Background(colorBgElevate)
 
 	spinnerStyle = lipgloss.NewStyle().
@@ -83,10 +84,10 @@ var (
 			Foreground(colorAccent)
 
 	statsLabelStyle = lipgloss.NewStyle().
-			Foreground(colorDim)
+			Foreground(colorMuted)
 
 	statsHintStyle = lipgloss.NewStyle().
-			Foreground(colorDim)
+			Foreground(colorMuted)
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// USER MESSAGES
@@ -102,7 +103,7 @@ var (
 	// ASSISTANT MESSAGES (rendered via glamour markdown)
 	// ═══════════════════════════════════════════════════════════════════════
 	thinkingStyle = lipgloss.NewStyle().
-			Foreground(colorDim).
+			Foreground(colorMuted).
 			Italic(true)
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -116,7 +117,7 @@ var (
 			Bold(true)
 
 	toolDescStyle = lipgloss.NewStyle().
-			Foreground(colorDim)
+			Foreground(colorMuted)
 
 	toolResultSuccessStyle = lipgloss.NewStyle().
 				Foreground(colorSuccess)
@@ -146,6 +147,15 @@ var (
 				Foreground(colorCaution).
 				Bold(true)
 
+	permissionPanelStyle = lipgloss.NewStyle().
+				Foreground(colorText).
+				Background(colorBgElevate).
+				Padding(0, 1)
+
+	permKeyStyle = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// MODE SELECTOR (input line pills — Claude Code style)
 	// ═══════════════════════════════════════════════════════════════════════
@@ -153,23 +163,23 @@ var (
 				Background(nord8).
 				Foreground(lipgloss.Color("#2e3440")).
 				Bold(true).
-				Padding(0, 1)
+				Padding(0, 2)
 
 	modeActivePlanStyle = lipgloss.NewStyle().
 				Background(nord13).
 				Foreground(lipgloss.Color("#2e3440")).
 				Bold(true).
-				Padding(0, 1)
+				Padding(0, 2)
 
 	modeActiveBuildStyle = lipgloss.NewStyle().
 				Background(nord14).
 				Foreground(lipgloss.Color("#2e3440")).
 				Bold(true).
-				Padding(0, 1)
+				Padding(0, 2)
 
 	modeInactiveStyle = lipgloss.NewStyle().
-				Foreground(nord3).
-				Padding(0, 1)
+				Foreground(colorMuted).
+				Padding(0, 2)
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// TOOL VISUALIZATION
@@ -184,10 +194,57 @@ var (
 				Foreground(colorError)
 
 	toolElapsedStyle = lipgloss.NewStyle().
-				Foreground(colorDim).
+				Foreground(colorMuted).
 				Italic(true)
 
 	toolTruncIndicatorStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	// Collapsed block hint
+	collapsedHintStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Italic(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// HEADER — PROJECT CONTEXT
+	// ═══════════════════════════════════════════════════════════════════════
+	headerDirStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	headerBranchStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess).
+				Italic(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// DIFF VISUALIZATION
+	// ═══════════════════════════════════════════════════════════════════════
+	diffAddStyle = lipgloss.NewStyle().
+			Foreground(colorSuccess) // nord14 green
+
+	diffDelStyle = lipgloss.NewStyle().
+			Foreground(colorError) // nord11 red
+
+	diffHunkStyle = lipgloss.NewStyle().
+			Foreground(colorAccent) // nord8 cyan
+
+	diffHeaderStyle = lipgloss.NewStyle().
+			Foreground(colorAccent2). // nord9
+			Bold(true)
+
+	diffContextStyle = lipgloss.NewStyle().
+				Foreground(colorText) // nord4
+
+	diffSummaryStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Italic(true)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PROGRESS BAR
+	// ═══════════════════════════════════════════════════════════════════════
+	progressFilledStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess)
+
+	progressEmptyStyle = lipgloss.NewStyle().
 				Foreground(colorDim)
 )
 

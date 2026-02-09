@@ -291,8 +291,12 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 
-	// Content viewport
-	b.WriteString(m.viewport.View())
+	// Content viewport (with optional help overlay)
+	if m.showHelpOverlay {
+		b.WriteString(renderHelpOverlay(m.width, m.viewport.Height))
+	} else {
+		b.WriteString(m.viewport.View())
+	}
 	b.WriteString("\n")
 
 	// Footer
@@ -309,15 +313,23 @@ func (m Model) renderHeader() string {
 	// Session ID (if available)
 	sessionPart := ""
 	if m.sessionID != "" {
-		// Show short session ID in subtle style
 		sessionPart = headerModelStyle.Render(fmt.Sprintf(" [%s]", m.sessionID))
+	}
+
+	// Project context: working dir and git branch
+	projectPart := ""
+	if m.workingDir != "" {
+		projectPart += " " + headerDirStyle.Render(m.workingDir)
+	}
+	if m.gitBranch != "" {
+		projectPart += " " + headerBranchStyle.Render("("+m.gitBranch+")")
 	}
 
 	// Model info
 	model := headerModelStyle.Render(fmt.Sprintf("Model: %s", m.modelName))
 
-	// Calculate spacing - header shows title, session, and model
-	leftPart := title + sessionPart
+	// Calculate spacing
+	leftPart := title + sessionPart + projectPart
 	rightPart := model
 
 	availWidth := m.width - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 4
@@ -356,7 +368,7 @@ func (m Model) renderFooter() string {
 	prompt := modeSelector + " "
 
 	// Always show text input - user can type and queue messages
-	inputLine := prompt + m.textInput.View()
+	inputLine := prompt + m.textArea.View()
 
 	b.WriteString(footerStyle.Width(m.width).Render(inputLine))
 	return b.String()
@@ -434,6 +446,16 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, warningStyle.Render(fmt.Sprintf("+%d queued", queueLen)))
 	}
 
+	// Show progress bar if active
+	if m.progressInfo != nil && m.progressInfo.Total > 0 {
+		parts = append(parts, renderProgressBar(m.progressInfo, 20))
+	}
+
+	// Show "new content below" indicator when user has scrolled up
+	if m.newContentPending && m.userScrolledUp {
+		parts = append(parts, warningStyle.Render("↓ New content (End to jump)"))
+	}
+
 	// Show contextual hint based on state
 	switch m.state {
 	case StateStreaming, StateRateLimited:
@@ -441,7 +463,7 @@ func (m Model) renderStatusBar() string {
 	case StatePermission:
 		parts = append(parts, statsHintStyle.Render("y/n/a/v"))
 	default:
-		parts = append(parts, statsHintStyle.Render("Shift+Tab: mode  /help"))
+		parts = append(parts, statsHintStyle.Render("Shift+Tab: mode  F1: help"))
 	}
 
 	// Join with simple spacing (cleaner look)
@@ -512,29 +534,57 @@ func (m Model) renderModeSelector() string {
 	return strings.Join(parts, "") + " " + inputPromptStyle.Render("▸")
 }
 
-// renderPermissionFooter renders the permission prompt in the footer
+// renderPermissionFooter renders the enhanced permission prompt panel
 func (m Model) renderPermissionFooter() string {
-	// Show permission level with color coding
-	levelStr := ""
+	var b strings.Builder
+
+	// Severity color band based on level
+	var levelStyle lipgloss.Style
+	var levelLabel string
 	switch m.permLevel {
 	case "read":
-		levelStr = infoStyle.Render("[READ]")
+		levelStyle = infoStyle
+		levelLabel = "READ"
 	case "write":
-		levelStr = warningStyle.Render("[WRITE]")
+		levelStyle = warningStyle
+		levelLabel = "WRITE"
 	case "execute":
-		levelStr = errorStyle.Render("[EXEC]")
+		levelStyle = errorStyle
+		levelLabel = "EXEC"
 	default:
-		levelStr = infoStyle.Render("[" + m.permLevel + "]")
+		levelStyle = infoStyle
+		levelLabel = strings.ToUpper(m.permLevel)
 	}
 
-	prompt := permissionPromptStyle.Render(
-		fmt.Sprintf("%s %s %s - %s",
-			iconWarning, levelStr, m.permToolName, m.permDescription))
+	// Line 1: severity badge + tool name
+	badge := levelStyle.Bold(true).Render(" " + levelLabel + " ")
+	toolName := permissionPromptStyle.Render(" " + m.permToolName)
+	b.WriteString(badge + toolName)
+	b.WriteString("\n")
 
-	// Key hints on same line
-	hints := statsHintStyle.Render(" [y]es/[n]o/[a]lways/ne[v]er")
+	// Line 2: description (truncated or full)
+	desc := m.permDescription
+	if !m.permDetailsExpanded && len(desc) > 60 {
+		desc = desc[:57] + "..."
+	}
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(colorText).Render(desc))
+	b.WriteString("\n")
 
-	return footerStyle.Width(m.width).Render(prompt + hints)
+	// Line 3: expanded details if toggled
+	if m.permDetailsExpanded && m.permFullContent != "" && len(m.permFullContent) > 60 {
+		b.WriteString("  " + lipgloss.NewStyle().Foreground(colorDim).Render(m.permFullContent))
+		b.WriteString("\n")
+	}
+
+	// Line 3/4: key hints
+	hints := permKeyStyle.Render("[y]") + statsHintStyle.Render("es  ") +
+		permKeyStyle.Render("[n]") + statsHintStyle.Render("o  ") +
+		permKeyStyle.Render("[a]") + statsHintStyle.Render("lways  ") +
+		permKeyStyle.Render("[v]") + statsHintStyle.Render("eto  ") +
+		permKeyStyle.Render("[d]") + statsHintStyle.Render("etails")
+	b.WriteString("  " + hints)
+
+	return permissionPanelStyle.Width(m.width).Render(b.String())
 }
 
 // renderStartupView renders the loading/startup view
@@ -547,14 +597,41 @@ func (m Model) renderStartupView() string {
 func (m Model) renderContent() string {
 	var b strings.Builder
 
-	for _, block := range *m.blocks {
-		b.WriteString(m.renderBlock(block))
+	for i, block := range *m.blocks {
+		// Use cached render if available
+		if block.RenderedCache != "" {
+			b.WriteString(block.RenderedCache)
+			b.WriteString("\n")
+			continue
+		}
+
+		rendered := m.renderBlock(block)
+
+		// Cache rendered output for completed, non-running blocks
+		isRunningTool := block.ToolMeta != nil && block.ToolMeta.IsRunning
+		if !isRunningTool {
+			(*m.blocks)[i].RenderedCache = rendered
+		}
+
+		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
 
-	// Add streaming content if any (render markdown for consistent formatting)
+	// Add streaming content if any (debounced markdown rendering)
 	if m.streaming.Len() > 0 {
-		b.WriteString(renderMarkdown(m.streaming.String()))
+		streamStr := m.streaming.String()
+		if m.renderedCache != "" {
+			// Show the cached Glamour render
+			b.WriteString(m.renderedCache)
+			// Append raw text tail (content added since last render)
+			if m.lastRenderedLen < len(streamStr) {
+				tail := streamStr[m.lastRenderedLen:]
+				b.WriteString(tail)
+			}
+		} else {
+			// No cache yet, show raw text
+			b.WriteString(streamStr)
+		}
 	}
 
 	return b.String()
@@ -581,6 +658,8 @@ func (m Model) renderBlock(block ContentBlock) string {
 		return m.renderWarningBlock(block)
 	case BlockSuccess:
 		return m.renderSuccessBlock(block)
+	case BlockPlan:
+		return renderMarkdown(block.Content)
 	default:
 		return block.Content
 	}
@@ -600,6 +679,9 @@ func (m Model) renderAssistantBlock(block ContentBlock) string {
 
 // renderThinkingBlock renders thinking text
 func (m Model) renderThinkingBlock(block ContentBlock) string {
+	if block.Collapsed {
+		return collapsedHintStyle.Render(fmt.Sprintf("... Thinking (%s)  [Ctrl+T to expand]", block.Summary))
+	}
 	return thinkingStyle.Render(block.Content)
 }
 
@@ -645,6 +727,21 @@ func (m Model) renderToolCallBlock(block ContentBlock) string {
 
 // renderToolResultBlock renders a tool execution result with elapsed time
 func (m Model) renderToolResultBlock(block ContentBlock) string {
+	// Collapsed view for non-error results
+	if block.Collapsed && !block.IsError {
+		icon := toolResultSuccessStyle.Render(iconSuccess + " ")
+		name := toolResultSuccessStyle.Render(block.ToolName)
+		elapsed := ""
+		if block.ToolMeta != nil && block.ToolMeta.Elapsed > 0 {
+			elapsed = " " + toolElapsedStyle.Render("("+formatDuration(block.ToolMeta.Elapsed)+")")
+		}
+		summary := ""
+		if block.Summary != "" {
+			summary = " " + collapsedHintStyle.Render("— "+block.Summary+"  [Ctrl+T to expand]")
+		}
+		return icon + name + elapsed + summary
+	}
+
 	var b strings.Builder
 
 	if block.IsError {
@@ -664,9 +761,14 @@ func (m Model) renderToolResultBlock(block ContentBlock) string {
 		// Render result if present
 		if block.Content != "" && block.Content != "(no output)" {
 			b.WriteString("\n")
-			// Indent result content for visual grouping
-			rendered := renderMarkdown(block.Content)
-			// Add 2-space indent to each line
+			// Use diff rendering if content looks like a unified diff
+			var rendered string
+			if isDiffContent(block.Content) {
+				rendered = renderDiff(block.Content)
+			} else {
+				rendered = renderMarkdown(block.Content)
+			}
+			// Add 2-space indent to each line for visual grouping
 			for i, line := range strings.Split(rendered, "\n") {
 				if i > 0 {
 					b.WriteString("\n")
@@ -684,6 +786,57 @@ func (m Model) renderToolResultBlock(block ContentBlock) string {
 	}
 
 	return b.String()
+}
+
+// renderProgressBar renders a mini progress bar for known-length operations
+func renderProgressBar(info *ProgressInfo, barWidth int) string {
+	if info.Total <= 0 {
+		return ""
+	}
+	pct := float64(info.Current) / float64(info.Total)
+	if pct > 1.0 {
+		pct = 1.0
+	}
+	filled := int(pct * float64(barWidth))
+	empty := barWidth - filled
+
+	bar := progressFilledStyle.Render(strings.Repeat("█", filled)) +
+		progressEmptyStyle.Render(strings.Repeat("░", empty))
+	label := fmt.Sprintf(" %d/%d", info.Current, info.Total)
+	desc := ""
+	if info.Description != "" {
+		desc = " " + info.Description
+	}
+	return bar + statsLabelStyle.Render(label) + statsHintStyle.Render(desc)
+}
+
+// isDiffContent checks if content looks like a unified diff
+func isDiffContent(content string) bool {
+	return strings.Contains(content, "\n--- ") && strings.Contains(content, "\n+++ ") &&
+		strings.Contains(content, "\n@@ ")
+}
+
+// renderDiff renders a unified diff with color-coded lines
+func renderDiff(content string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			b.WriteString(diffHeaderStyle.Render(line))
+		case strings.HasPrefix(line, "@@"):
+			b.WriteString(diffHunkStyle.Render(line))
+		case strings.HasPrefix(line, "+"):
+			b.WriteString(diffAddStyle.Render(line))
+		case strings.HasPrefix(line, "-"):
+			b.WriteString(diffDelStyle.Render(line))
+		case strings.HasSuffix(line, "insertion(s)") || strings.HasSuffix(line, "deletion(s)"):
+			b.WriteString(diffSummaryStyle.Render(line))
+		default:
+			b.WriteString(diffContextStyle.Render(line))
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // renderErrorBlock renders an error message

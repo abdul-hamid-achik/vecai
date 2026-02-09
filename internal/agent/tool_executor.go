@@ -12,12 +12,23 @@ import (
 	"github.com/abdul-hamid-achik/vecai/internal/tools"
 )
 
+// maxToolOutput is the maximum size of tool output before truncation (50KB).
+const maxToolOutput = 50000
+
 // toolResult holds the result of a tool execution.
 type toolResult struct {
 	Name       string
 	Result     string
 	Error      bool
 	ToolCallID string
+}
+
+// truncateToolOutput truncates tool output if it exceeds maxToolOutput bytes.
+func truncateToolOutput(result string) string {
+	if len(result) <= maxToolOutput {
+		return result
+	}
+	return result[:maxToolOutput] + "\n\n... (output truncated, showing first 50KB)"
 }
 
 // ToolExecutor handles tool execution with unified output.
@@ -72,6 +83,19 @@ func (te *ToolExecutor) ExecuteToolCalls(ctx context.Context, calls []llm.ToolCa
 	var results []toolResult
 
 	for _, call := range calls {
+		// Check for context cancellation between tool calls
+		select {
+		case <-ctx.Done():
+			results = append(results, toolResult{
+				Name:       call.Name,
+				Result:     "Interrupted",
+				Error:      true,
+				ToolCallID: call.ID,
+			})
+			return results
+		default:
+		}
+
 		callID := call.ID
 		debug.ToolCall(call.Name, call.Input)
 
@@ -131,6 +155,8 @@ func (te *ToolExecutor) ExecuteToolCalls(ctx context.Context, calls []llm.ToolCa
 			output.ToolResult(call.Name, err.Error(), true)
 		} else {
 			debug.ToolResult(call.Name, true, len(result))
+			// Truncate large tool outputs to prevent memory bloat
+			result = truncateToolOutput(result)
 			contextResult := result
 			if te.resultCache != nil && ctxmgr.ShouldCache(result) {
 				summary, _ := te.resultCache.Store(call.Name, call.Input, result)
@@ -225,7 +251,9 @@ func (te *ToolExecutor) executeParallel(ctx context.Context, calls []llm.ToolCal
 			output.ToolResult(r.Name, r.Result, true)
 		} else {
 			debug.ToolResult(r.Name, true, len(r.Result))
-			displayResult := r.Result
+			// Truncate large tool outputs
+			results[i].Result = truncateToolOutput(r.Result)
+			displayResult := results[i].Result
 			if te.resultCache != nil && ctxmgr.ShouldCache(r.Result) {
 				summary, _ := te.resultCache.Store(r.Name, calls[i].Input, r.Result)
 				results[i].Result = summary

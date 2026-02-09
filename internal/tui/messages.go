@@ -36,6 +36,8 @@ type StreamMsg struct {
 	Usage         *TokenUsage       // Token usage (only for "done" type)
 	RateLimitInfo *RateLimitInfo    // Rate limit info (only for "rate_limit" type)
 	ContextStats  *ContextStatsInfo // Context stats (only for "context_stats" type)
+	ProjectInfo   *ProjectInfo      // Project info (only for "project_info" type)
+	ProgressData  *ProgressInfo     // Progress info (only for "progress" type)
 }
 
 // TokenUsage represents token counts from API response
@@ -46,6 +48,9 @@ type TokenUsage struct {
 
 // TickMsg is sent for spinner animation
 type TickMsg struct{}
+
+// RenderTickMsg is sent to trigger a debounced markdown re-render during streaming
+type RenderTickMsg struct{}
 
 // PermissionResponseMsg is sent when user responds to a permission prompt
 type PermissionResponseMsg struct {
@@ -177,4 +182,46 @@ func NewContextStatsMsg(info ContextStatsInfo) StreamMsg {
 // NewSessionIDMsg creates a session ID update message
 func NewSessionIDMsg(sessionID string) StreamMsg {
 	return StreamMsg{Type: "session_id", Text: sessionID}
+}
+
+// ProjectInfo contains working directory and git branch for the header
+type ProjectInfo struct {
+	WorkingDir string
+	GitBranch  string
+}
+
+// ProgressInfo contains progress information for known-length operations
+type ProgressInfo struct {
+	Current     int    // Current item count
+	Total       int    // Total item count
+	Description string // What's being done (e.g., "Indexing files")
+}
+
+// NewProjectInfoMsg creates a project info update message
+func NewProjectInfoMsg(info ProjectInfo) StreamMsg {
+	return StreamMsg{Type: "project_info", ProjectInfo: &info}
+}
+
+// NewProgressMsg creates a progress update message
+func NewProgressMsg(current, total int, description string) StreamMsg {
+	return StreamMsg{Type: "progress", ProgressData: &ProgressInfo{
+		Current:     current,
+		Total:       total,
+		Description: description,
+	}}
+}
+
+// NewProgressClearMsg creates a message to clear the progress bar
+func NewProgressClearMsg() StreamMsg {
+	return StreamMsg{Type: "progress_clear"}
+}
+
+// NewPlanMsg creates a plan display message (rendered as markdown)
+func NewPlanMsg(text string) StreamMsg {
+	return StreamMsg{Type: "plan", Text: text}
+}
+
+// NewPlanUpdateMsg updates an existing plan block with new content
+func NewPlanUpdateMsg(text string) StreamMsg {
+	return StreamMsg{Type: "plan_update", Text: text}
 }

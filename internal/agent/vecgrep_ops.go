@@ -50,10 +50,9 @@ func (a *Agent) checkVecgrepStatusTUI(adapter *tui.TUIAdapter) {
 	// Don't show "vecgrep index is ready" - it clutters the viewport with no ongoing value
 }
 
-// autoInitVecgrepTUI automatically initializes and indexes vecgrep with TUI output
+// autoInitVecgrepTUI automatically initializes and indexes vecgrep with TUI output.
+// If already initialized, it checks for stale files and reindexes if needed.
 func (a *Agent) autoInitVecgrepTUI(ctx context.Context, adapter *tui.TUIAdapter) {
-	adapter.Info("Vecgrep not initialized. Auto-initializing...")
-
 	// Get working directory
 	wd, err := os.Getwd()
 	if err != nil {
@@ -61,7 +60,7 @@ func (a *Agent) autoInitVecgrepTUI(ctx context.Context, adapter *tui.TUIAdapter)
 		return
 	}
 
-	// Run vecgrep_init
+	// Run vecgrep_init (handles "already initialized" gracefully)
 	initTool, ok := a.tools.Get("vecgrep_init")
 	if !ok {
 		adapter.Warning("vecgrep_init tool not available")
@@ -75,7 +74,21 @@ func (a *Agent) autoInitVecgrepTUI(ctx context.Context, adapter *tui.TUIAdapter)
 		adapter.Warning("vecgrep init failed: " + err.Error())
 		return
 	}
-	adapter.Info("vecgrep_init: " + truncateResult(result, 80))
+
+	alreadyInitialized := strings.Contains(result, "already initialized")
+
+	if alreadyInitialized {
+		// Already initialized — check if reindexing is needed
+		staleCount := a.getVecgrepStaleCount(ctx)
+		if staleCount > 0 {
+			adapter.Info(fmt.Sprintf("Reindexing %d changed files...", staleCount))
+		} else {
+			// All good, nothing to do
+			return
+		}
+	} else {
+		adapter.Info("Initialized vecgrep. Indexing codebase...")
+	}
 
 	// Run vecgrep_index
 	indexTool, ok := a.tools.Get("vecgrep_index")
@@ -84,7 +97,6 @@ func (a *Agent) autoInitVecgrepTUI(ctx context.Context, adapter *tui.TUIAdapter)
 		return
 	}
 
-	adapter.Info("Indexing codebase (this may take a moment)...")
 	result, err = indexTool.Execute(ctx, map[string]any{})
 	if err != nil {
 		adapter.Warning("vecgrep index failed: " + err.Error())

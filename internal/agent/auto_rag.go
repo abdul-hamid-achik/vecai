@@ -12,7 +12,7 @@ import (
 // autoRAGSearch performs a vecgrep search for the query and returns
 // formatted code context suitable for injection before the first LLM call.
 // Returns empty string if vecgrep is unavailable or no results found.
-func (a *Agent) autoRAGSearch(query string) string {
+func (a *Agent) autoRAGSearch(ctx context.Context, query string) string {
 	// Skip trivial queries: commands, very short, or greetings
 	if strings.HasPrefix(query, "/") {
 		return ""
@@ -28,7 +28,7 @@ func (a *Agent) autoRAGSearch(query string) string {
 		return ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "vecgrep", "search",

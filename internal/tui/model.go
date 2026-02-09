@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/vecai/internal/logging"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -57,15 +57,20 @@ const (
 	BlockInfo                        // Info message
 	BlockWarning                     // Warning message
 	BlockSuccess                     // Success message
+	BlockPlan                        // Plan (Glamour-rendered, updatable)
 )
 
 // ContentBlock represents a piece of content in the conversation
 type ContentBlock struct {
-	Type     BlockType
-	Content  string
-	ToolName string
-	IsError  bool
-	ToolMeta *ToolBlockMeta // Metadata for tool blocks (optional)
+	Type          BlockType
+	Content       string
+	ToolName      string
+	IsError       bool
+	ToolMeta      *ToolBlockMeta // Metadata for tool blocks (optional)
+	Collapsed     bool           // Whether this block is collapsed
+	BlockID       int            // Unique block identifier
+	Summary       string         // Collapsed summary text (e.g., "42 lines, 1.2 KB")
+	RenderedCache string         // Cached render output (cleared when content changes)
 }
 
 // AgentMode represents the current operating mode of the agent
@@ -182,8 +187,8 @@ type Model struct {
 	streaming *strings.Builder // Pointer to survive model copies
 
 	// Components
-	viewport  viewport.Model
-	textInput textinput.Model
+	viewport viewport.Model
+	textArea textarea.Model
 
 	// Channels
 	streamChan chan StreamMsg
@@ -192,9 +197,11 @@ type Model struct {
 	doneChan   chan struct{} // Closed on quit to unblock waitForStream goroutines
 
 	// Permission state
-	permToolName    string
-	permLevel       string
-	permDescription string
+	permToolName       string
+	permLevel          string
+	permDescription    string
+	permDetailsExpanded bool   // Whether permission details are expanded
+	permFullContent    string // Full content for expanded view
 
 	// Spinner state
 	spinnerActive bool
@@ -214,8 +221,11 @@ type Model struct {
 	contextUsage float64 // Context usage as percentage (0.0 - 1.0)
 	contextWarn  bool    // Whether context warning threshold reached
 
-	// Interrupt channel for ESC during streaming
-	interruptChan chan struct{}
+	// Interrupt channels for ESC during streaming
+	interruptChan      chan struct{} // Graceful interrupt (first ESC)
+	forceInterruptChan chan struct{} // Force interrupt (second ESC)
+	interruptPending   bool         // Whether a graceful interrupt has been sent
+	lastInterruptTime  time.Time    // When last ESC was pressed (for double-ESC detection)
 
 	// Rate limit state
 	rateLimitInfo    *RateLimitInfo // Current rate limit info (nil if not rate limited)
@@ -239,21 +249,62 @@ type Model struct {
 
 	// Tool visualization
 	activeTools map[string]*ToolBlockMeta // Track running tools by GroupID
+
+	// Streaming render cache (debounced markdown rendering)
+	lastRenderTime  time.Time // When we last ran Glamour on the streaming buffer
+	lastRenderedLen int       // Length of streaming buffer at last render
+	renderedCache   string    // Cached Glamour output from last render
+	renderPending   bool      // Whether a RenderTickMsg is pending
+
+	// Smart auto-scroll (sticky bottom)
+	userScrolledUp    bool // True if user has scrolled up from bottom
+	newContentPending bool // True if new content arrived while user scrolled up
+
+	// Viewport render batching
+	viewportDirty bool // Whether viewport needs re-rendering
+
+	// Collapsible blocks
+	nextBlockID    int  // Monotonically increasing block ID
+	toolsCollapsed bool // Global toggle for tool/thinking block collapse
+
+	// Project context (enhanced header)
+	workingDir string // Current working directory (shortened)
+	gitBranch  string // Current git branch
+
+	// Input history navigation
+	inputHistory   []string // Previous inputs (newest first)
+	historyIdx     int      // Current position in history (-1 = not browsing)
+	historySavedIn string   // Saved current input when entering history mode
+
+	// Help overlay
+	showHelpOverlay bool
+
+	// Progress tracking
+	progressInfo *ProgressInfo
+
+	// Plan block tracking (for dynamic step updates)
+	planBlockID int // Unique BlockID of the plan block (0 if none)
 }
 
 // NewModel creates a new TUI model
 func NewModel(modelName string, streamChan chan StreamMsg) Model {
-	ti := textinput.New()
-	ti.Placeholder = "Type message..."
-	ti.Prompt = "" // We render our own prompt in the footer
-	ti.Focus()
-	ti.CharLimit = 0 // No limit
-	ti.Width = 50
+	ta := textarea.New()
+	ta.Placeholder = "Type message..."
+	ta.Prompt = "" // We render our own prompt in the footer
+	ta.Focus()
+	ta.CharLimit = 0          // No limit
+	ta.MaxHeight = 5          // Grow up to 5 lines
+	ta.ShowLineNumbers = false // Clean look
+	ta.SetWidth(50)
+	ta.SetHeight(1) // Start as single line
 
-	// Apply Nord theme styling to textinput
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)     // Cyan cursor
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(nord3) // Dim placeholder
-	ti.TextStyle = lipgloss.NewStyle().Foreground(nord4)        // Primary text
+	// Apply Nord theme styling to textarea
+	ta.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)                    // Cyan cursor
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)    // Readable placeholder
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(nord4)               // Primary text
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()                           // No highlight on current line
+	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)   // Readable placeholder
+	ta.BlurredStyle.Text = lipgloss.NewStyle().Foreground(colorMuted)          // Muted when blurred
 
 	blocks := make([]ContentBlock, 0)
 	return Model{
@@ -265,15 +316,17 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		resultChan:    make(chan PermissionResult, 1),
 		readyChan:     make(chan struct{}),
 		doneChan:      make(chan struct{}),
-		textInput:     ti,
+		textArea:      ta,
 		maxIterations: 20,
-		interruptChan: make(chan struct{}, 1),
+		interruptChan:      make(chan struct{}, 1),
+		forceInterruptChan: make(chan struct{}, 1),
 		inputQueue:    make([]string, 0, 10),
 		maxQueueSize:  10,
 		callbacks:     &modelCallbacks{}, // Pointer survives copy to tea.Program
 		agentMode:     ModeBuild,         // Default to full execution mode
 		completer:     NewCompleter(),    // Pointer survives model copies
 		activeTools:   make(map[string]*ToolBlockMeta),
+		historyIdx:  -1,
 	}
 }
 
@@ -298,7 +351,7 @@ func (m Model) Init() tea.Cmd {
 	// Start with spinner for loading animation
 	// Don't start stream listener until we're ready
 	return tea.Batch(
-		textinput.Blink,
+		textarea.Blink,
 		tickCmd(), // Start spinner for loading animation
 	)
 }
@@ -346,11 +399,54 @@ func (m Model) signalReady() tea.Cmd {
 	}
 }
 
+// maxBlocks is the maximum number of content blocks to retain in the TUI.
+const maxBlocks = 500
+
 // AddBlock adds a content block to the conversation
 func (m *Model) AddBlock(block ContentBlock) {
+	m.nextBlockID++
+	block.BlockID = m.nextBlockID
+
+	// Auto-collapse tool results (not errors) and thinking blocks when toggle is on
+	if m.toolsCollapsed {
+		if (block.Type == BlockToolResult && !block.IsError) || block.Type == BlockThinking {
+			block.Collapsed = true
+		}
+	}
+
+	// Generate summary for collapsible blocks
+	if block.Type == BlockToolResult && !block.IsError {
+		lines := strings.Count(block.Content, "\n") + 1
+		block.Summary = fmt.Sprintf("%d lines, %s", lines, formatByteCount(len(block.Content)))
+	} else if block.Type == BlockThinking {
+		block.Summary = fmt.Sprintf("%d chars", len(block.Content))
+	}
+
 	*m.blocks = append(*m.blocks, block)
+
+	// Cap block history to prevent unbounded memory growth
+	if len(*m.blocks) > maxBlocks {
+		trimCount := len(*m.blocks) - maxBlocks
+		*m.blocks = (*m.blocks)[trimCount:]
+		// Reset plan block ID if the plan block was trimmed
+		planFound := false
+		for _, b := range *m.blocks {
+			if b.BlockID == m.planBlockID {
+				planFound = true
+				break
+			}
+		}
+		if !planFound {
+			m.planBlockID = 0
+		}
+	}
+
 	m.updateViewportContent()
-	m.scrollToBottom()
+	if m.userScrolledUp {
+		m.newContentPending = true
+	} else {
+		m.scrollToBottom()
+	}
 }
 
 // ClearBlocks clears all content blocks
@@ -384,6 +480,11 @@ func (m *Model) GetResultChan() chan PermissionResult {
 // GetInterruptChan returns the interrupt channel for ESC handling
 func (m *Model) GetInterruptChan() chan struct{} {
 	return m.interruptChan
+}
+
+// GetForceInterruptChan returns the force interrupt channel (second ESC)
+func (m *Model) GetForceInterruptChan() chan struct{} {
+	return m.forceInterruptChan
 }
 
 // GetSessionStats returns current session statistics

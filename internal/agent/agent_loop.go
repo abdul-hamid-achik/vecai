@@ -30,27 +30,46 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 
 	// Check if output supports interrupt and stats
 	interruptible, hasInterrupt := output.(InterruptSupport)
+	forceInterruptible, hasForceInterrupt := output.(ForceInterruptSupport)
 	statsOut, hasStats := output.(StatsSupport)
 
 	// Create cancellable context for interrupt support
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
-	// Monitor interrupt channel if available
+	// forceStop is closed when the user double-presses ESC — the loop should
+	// bail out immediately without waiting for in-flight operations.
+	forceStop := make(chan struct{})
+
+	// Monitor interrupt channels if available
 	if hasInterrupt {
 		interruptChan := interruptible.GetInterruptChan()
+		var forceChan <-chan struct{}
+		if hasForceInterrupt {
+			forceChan = forceInterruptible.GetForceInterruptChan()
+		}
 		go func() {
+			// Wait for graceful interrupt first
 			select {
 			case <-interruptChan:
 				cancelRun()
 			case <-runCtx.Done():
+				return
+			}
+			// After graceful interrupt, wait for force interrupt or exit
+			if forceChan != nil {
+				select {
+				case <-forceChan:
+					close(forceStop)
+				case <-runCtx.Done():
+				}
 			}
 		}()
 	}
 
 	// Auto RAG: inject relevant code context before first LLM call
 	if a.currentQuery != "" && !a.analysisMode {
-		if ragCtx := a.autoRAGSearch(a.currentQuery); ragCtx != "" {
+		if ragCtx := a.autoRAGSearch(runCtx, a.currentQuery); ragCtx != "" {
 			a.contextMgr.AddMessage(llm.Message{
 				Role:    "user",
 				Content: "[Relevant code context from codebase search]\n" + ragCtx,
@@ -90,10 +109,14 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 
 		// Process stream with interrupt-aware select when available
 		if hasInterrupt {
-			// TUI-style: use select to race between chunks and context cancellation
+			// TUI-style: use select to race between chunks, cancel, and force-stop
 		streamLoopInterruptible:
 			for {
 				select {
+				case <-forceStop:
+					interrupted = true
+					break streamLoopInterruptible
+
 				case <-runCtx.Done():
 					interrupted = true
 					break streamLoopInterruptible
@@ -146,6 +169,15 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		// If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
 			return nil
+		}
+
+		// Check for force-stop before executing tools
+		select {
+		case <-forceStop:
+			output.Warning("Force stopped by user")
+			output.StreamDone()
+			return nil
+		default:
 		}
 
 		// Execute tool calls

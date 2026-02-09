@@ -53,6 +53,17 @@ type InterruptSupport interface {
 	GetInterruptChan() <-chan struct{}
 }
 
+// ForceInterruptSupport is optionally implemented by outputs that support force-stop (double ESC).
+type ForceInterruptSupport interface {
+	GetForceInterruptChan() <-chan struct{}
+}
+
+// PlanSupport is optionally implemented by outputs that can display live-updating plans.
+type PlanSupport interface {
+	Plan(text string)
+	PlanUpdate(text string)
+}
+
 // StatsSupport is optionally implemented by outputs that display stats.
 type StatsSupport interface {
 	UpdateContextStats(usagePercent float64, usedTokens, contextWindow int, needsWarning bool)

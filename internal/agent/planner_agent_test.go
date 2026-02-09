@@ -47,10 +47,6 @@ func TestPlannerAgent_FormatPlan(t *testing.T) {
 				"[ ] **Read current logger** (read)",
 				"[x] **Replace fmt calls** (code)",
 				"Files: main.go",
-				"### Risks",
-				"Breaking existing callers",
-				"### Assumptions",
-				"Tests exist for logger",
 			},
 		},
 		{
@@ -553,6 +549,151 @@ func TestPlannerAgent_buildFallbackPlan(t *testing.T) {
 			t.Fatalf("Expected 1 step, got %d", len(got.Steps))
 		}
 	})
+}
+
+// --- stripThinkTags ---
+
+func TestStripThinkTags(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no think tags",
+			input: `{"goal":"test","steps":[]}`,
+			want:  `{"goal":"test","steps":[]}`,
+		},
+		{
+			name:  "think tags before JSON",
+			input: "<think>\nLet me analyze this...\n</think>\n{\"goal\":\"test\",\"steps\":[]}",
+			want:  `{"goal":"test","steps":[]}`,
+		},
+		{
+			name:  "think tags wrapping everything",
+			input: "<think>reasoning here</think>Here is the plan",
+			want:  "Here is the plan",
+		},
+		{
+			name:  "multiple think blocks",
+			input: "<think>first</think>middle<think>second</think>end",
+			want:  "middleend",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripThinkTags(tt.input)
+			if got != tt.want {
+				t.Errorf("stripThinkTags() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- extractJSONSubstring ---
+
+func TestExtractJSONSubstring(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "pure JSON",
+			input: `{"goal":"test"}`,
+			want:  `{"goal":"test"}`,
+		},
+		{
+			name:  "JSON with trailing text",
+			input: `{"goal":"test","steps":[]} Let me know if you need changes!`,
+			want:  `{"goal":"test","steps":[]}`,
+		},
+		{
+			name:  "JSON with leading text",
+			input: `Here is the plan: {"goal":"test","steps":[]}`,
+			want:  `{"goal":"test","steps":[]}`,
+		},
+		{
+			name:  "JSON with both leading and trailing text",
+			input: `Sure! {"goal":"test","steps":[]} Hope that helps.`,
+			want:  `{"goal":"test","steps":[]}`,
+		},
+		{
+			name:  "no JSON",
+			input: "no json here at all",
+			want:  "",
+		},
+		{
+			name:  "only opening brace",
+			input: "{ but no closing",
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractJSONSubstring(tt.input)
+			if got != tt.want {
+				t.Errorf("extractJSONSubstring() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- buildFallbackPlan with trailing text (the screenshot bug) ---
+
+func TestPlannerAgent_buildFallbackPlan_JSONWithTrailingText(t *testing.T) {
+	planner, _ := newTestPlannerAgent(t)
+
+	t.Run("JSON with trailing text should extract steps", func(t *testing.T) {
+		content := `{"summary": "Fix the bug", "steps": [{"description": "Find root cause"}, {"description": "Apply patch"}]} Let me know if you want me to refine this plan!`
+		got := planner.buildFallbackPlan("Fix bug", content)
+		if got.Summary != "Fix the bug" {
+			t.Errorf("Summary = %q, want 'Fix the bug'", got.Summary)
+		}
+		if len(got.Steps) != 2 {
+			t.Fatalf("Expected 2 steps, got %d", len(got.Steps))
+		}
+	})
+
+	t.Run("think tags followed by JSON", func(t *testing.T) {
+		content := "<think>\nLet me think about this...\n</think>\n{\"summary\": \"Refactor\", \"steps\": [{\"description\": \"Extract method\"}]}"
+		got := planner.buildFallbackPlan("Refactor", content)
+		if got.Summary != "Refactor" {
+			t.Errorf("Summary = %q, want 'Refactor'", got.Summary)
+		}
+		if len(got.Steps) != 1 {
+			t.Fatalf("Expected 1 step, got %d", len(got.Steps))
+		}
+	})
+
+	t.Run("think tags + JSON + trailing text", func(t *testing.T) {
+		content := "<think>reasoning</think>\n{\"summary\": \"Plan\", \"steps\": [{\"description\": \"Do it\"}]}\nHope this helps!"
+		got := planner.buildFallbackPlan("Test", content)
+		if len(got.Steps) != 1 {
+			t.Fatalf("Expected 1 step, got %d", len(got.Steps))
+		}
+		if got.Steps[0].Description != "Do it" {
+			t.Errorf("Step description = %q, want 'Do it'", got.Steps[0].Description)
+		}
+	})
+}
+
+// --- parsePlan with think tags ---
+
+func TestPlannerAgent_parsePlan_WithThinkTags(t *testing.T) {
+	planner, _ := newTestPlannerAgent(t)
+
+	input := "<think>\nAnalyzing the task...\n</think>\n{\"goal\":\"test\",\"summary\":\"s\",\"steps\":[{\"id\":\"s1\",\"description\":\"do it\",\"type\":\"code\"}]}"
+	got, err := planner.parsePlan(input)
+	if err != nil {
+		t.Fatalf("parsePlan() with think tags should succeed, got error: %v", err)
+	}
+	if len(got.Steps) != 1 {
+		t.Errorf("Expected 1 step, got %d", len(got.Steps))
+	}
+	if got.Goal != "test" {
+		t.Errorf("Expected goal 'test', got %q", got.Goal)
+	}
 }
 
 // --- truncateDescription ---
