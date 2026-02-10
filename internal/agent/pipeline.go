@@ -80,6 +80,33 @@ func (p *Pipeline) Execute(ctx context.Context, task string, output AgentOutput)
 	return p.executeSingleAgentFlow(ctx, task, result)
 }
 
+// ExecuteWithIntent runs the pipeline with a pre-classified intent,
+// skipping the duplicate ClassifyIntent call when the caller already knows the intent.
+func (p *Pipeline) ExecuteWithIntent(ctx context.Context, task string, intent Intent, output AgentOutput) (*PipelineResult, error) {
+	result := &PipelineResult{
+		Intent: intent,
+	}
+
+	logDebug("Pipeline: using pre-classified intent %s", intent)
+
+	// Log intent to debug tracer
+	truncatedTask := task
+	if len(truncatedTask) > 100 {
+		truncatedTask = truncatedTask[:100] + "..."
+	}
+	debug.Event_(debug.EventIntentClassified, map[string]any{
+		"query":  truncatedTask,
+		"intent": string(intent),
+	})
+
+	// Route to appropriate flow
+	if p.router.ShouldUseMultiAgent(intent) {
+		return p.executeMultiAgentFlow(ctx, task, result, output)
+	}
+
+	return p.executeSingleAgentFlow(ctx, task, result)
+}
+
 // executeMultiAgentFlow handles complex tasks with planning
 func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, result *PipelineResult, output AgentOutput) (*PipelineResult, error) {
 	logDebug("Pipeline: using multi-agent flow")

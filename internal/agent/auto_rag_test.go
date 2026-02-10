@@ -7,32 +7,8 @@ import (
 	"testing"
 )
 
-func TestItoa(t *testing.T) {
-	tests := []struct {
-		name string
-		n    int
-		want string
-	}{
-		{"zero", 0, "0"},
-		{"positive single digit", 7, "7"},
-		{"positive multi digit", 42, "42"},
-		{"large number", 12345, "12345"},
-		{"negative single digit", -3, "-3"},
-		{"negative multi digit", -99, "-99"},
-		{"one", 1, "1"},
-		{"ten", 10, "10"},
-		{"hundred", 100, "100"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := itoa(tt.n)
-			if got != tt.want {
-				t.Errorf("itoa(%d) = %q, want %q", tt.n, got, tt.want)
-			}
-		})
-	}
-}
+// defaultTestContextWindow is a reasonable context window for tests (8192 tokens)
+const defaultTestContextWindow = 8192
 
 func TestFormatRAGResults_Empty(t *testing.T) {
 	tests := []struct {
@@ -49,7 +25,7 @@ func TestFormatRAGResults_Empty(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatRAGResults(tt.data)
+			got := formatRAGResults(tt.data, defaultTestContextWindow)
 			if got != "" {
 				t.Errorf("formatRAGResults(%q) = %q, want empty string", tt.data, got)
 			}
@@ -71,7 +47,7 @@ func TestFormatRAGResults_SingleResult(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if !strings.Contains(got, "main.go:10-20") {
 		t.Errorf("expected header 'main.go:10-20', got %q", got)
 	}
@@ -94,7 +70,7 @@ func TestFormatRAGResults_SingleLine(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if !strings.Contains(got, "util.go:5") {
 		t.Errorf("expected header 'util.go:5', got %q", got)
 	}
@@ -114,7 +90,7 @@ func TestFormatRAGResults_NoLineNumbers(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if !strings.HasPrefix(got, "readme.md\n") {
 		t.Errorf("expected header 'readme.md' with no line numbers, got %q", got)
 	}
@@ -129,7 +105,7 @@ func TestFormatRAGResults_MultipleResults(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if !strings.Contains(got, "a.go:1-5") {
 		t.Errorf("missing first result header, got %q", got)
 	}
@@ -150,7 +126,7 @@ func TestFormatRAGResults_EmptyContentSkipped(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if strings.Contains(got, "empty.go") {
 		t.Errorf("result with empty content should be skipped, got %q", got)
 	}
@@ -159,9 +135,11 @@ func TestFormatRAGResults_EmptyContentSkipped(t *testing.T) {
 	}
 }
 
-func TestFormatRAGResults_TruncationAt8000Chars(t *testing.T) {
-	// Create results where the second one would exceed the 8000 char cap
-	bigContent := strings.Repeat("x", 5000)
+func TestFormatRAGResults_Truncation(t *testing.T) {
+	// Use a large context window so budget becomes 12000 (clamped max)
+	// Create results where the second one would exceed the budget
+	largeContextWindow := 32768
+	bigContent := strings.Repeat("x", 8000)
 	resp := ragResponse{
 		Results: []ragResult{
 			{File: "first.go", StartLine: 1, Content: bigContent},
@@ -170,15 +148,16 @@ func TestFormatRAGResults_TruncationAt8000Chars(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, largeContextWindow)
 	if !strings.Contains(got, "first.go") {
 		t.Errorf("first result should be included, got length %d", len(got))
 	}
 	if strings.Contains(got, "second.go") {
-		t.Errorf("second result should be truncated (total would exceed 8000), got length %d", len(got))
+		t.Errorf("second result should be truncated (total would exceed budget), got length %d", len(got))
 	}
-	if len(got) > 8000 {
-		t.Errorf("output length %d exceeds 8000 char cap", len(got))
+	// Budget for 32768 context: 32768 * 4 * 15 / 100 = 19660, clamped to 12000
+	if len(got) > 12000 {
+		t.Errorf("output length %d exceeds 12000 char cap", len(got))
 	}
 }
 
@@ -190,7 +169,7 @@ func TestFormatRAGResults_TrailingNewlinesTrimmed(t *testing.T) {
 	}
 	data, _ := json.Marshal(resp)
 
-	got := formatRAGResults(data)
+	got := formatRAGResults(data, defaultTestContextWindow)
 	if strings.HasSuffix(got, "\n") {
 		t.Errorf("output should not end with newline, got %q", got)
 	}

@@ -45,10 +45,10 @@ func TestGetModel(t *testing.T) {
 		tier     ModelTier
 		expected string
 	}{
-		{TierFast, "llama3.2:3b"},
-		{TierSmart, "qwen3:8b"},
-		{TierGenius, "qwen3:14b"},
-		{ModelTier("unknown"), "qwen3:8b"}, // default fallback
+		{TierFast, "qwen2.5-coder:1.5b"},
+		{TierSmart, "qwen2.5-coder:7b"},
+		{TierGenius, "qwen2.5-coder:7b"},
+		{ModelTier("unknown"), "qwen2.5-coder:7b"}, // default fallback
 	}
 
 	for _, tt := range tests {
@@ -65,7 +65,7 @@ func TestGetDefaultModel(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultTier = TierFast
 
-	expected := "llama3.2:3b"
+	expected := "qwen2.5-coder:1.5b"
 	if got := cfg.GetDefaultModel(); got != expected {
 		t.Errorf("GetDefaultModel() = %s, want %s", got, expected)
 	}

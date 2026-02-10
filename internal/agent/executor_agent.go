@@ -73,7 +73,7 @@ func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previou
 	toolDefs := e.getToolsForStepType(step.Type)
 
 	// Execute with tool loop
-	maxIterations := 10
+	maxIterations := 7
 	for i := 0; i < maxIterations; i++ {
 		resp, err := e.client.Chat(ctx, messages, toolDefs, systemPrompt)
 		if err != nil {
@@ -145,7 +145,7 @@ func (e *ExecutorAgent) ExecuteDirectTask(ctx context.Context, task string, inte
 	}
 
 	// Execute with tool loop
-	maxIterations := 15
+	maxIterations := 10
 	for i := 0; i < maxIterations; i++ {
 		resp, err := e.client.Chat(ctx, messages, toolDefs, systemPrompt)
 		if err != nil {

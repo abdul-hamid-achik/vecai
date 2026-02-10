@@ -21,18 +21,18 @@ const (
 type ModelTier string
 
 const (
-	TierFast   ModelTier = "fast"   // Fast model (llama3.2:3b)
-	TierSmart  ModelTier = "smart"  // Smart model (qwen3:8b)
-	TierGenius ModelTier = "genius" // Genius model (qwen3:14b)
+	TierFast   ModelTier = "fast"   // Fast model (qwen2.5-coder:1.5b)
+	TierSmart  ModelTier = "smart"  // Smart model (qwen2.5-coder:7b)
+	TierGenius ModelTier = "genius" // Genius model (qwen2.5-coder:7b)
 )
 
 // OllamaConfig holds Ollama-specific configuration
 type OllamaConfig struct {
 	BaseURL     string `yaml:"base_url"`     // Default: "http://localhost:11434"
-	ModelFast   string `yaml:"model_fast"`   // Default: "qwen3:8b"
+	ModelFast   string `yaml:"model_fast"`   // Default: "qwen2.5-coder:1.5b"
 	ModelSmart  string `yaml:"model_smart"`  // Default: "qwen2.5-coder:7b"
-	ModelGenius string `yaml:"model_genius"` // Default: "cogito:14b"
-	KeepAlive   string `yaml:"keep_alive"`   // Default: "5m"
+	ModelGenius string `yaml:"model_genius"` // Default: "qwen2.5-coder:7b"
+	KeepAlive   string `yaml:"keep_alive"`   // Default: "10m"
 	NumCtx      int    `yaml:"num_ctx"`      // Explicit num_ctx override (0 = use model default)
 	NumThread   int    `yaml:"num_thread"`   // Explicit num_thread override (0 = Ollama default)
 }
@@ -47,8 +47,14 @@ var ModelContextWindows = map[string]int{
 	"qwen3:14b":    32768,
 	"qwen3:4b":     8192,
 	"qwen3:1.7b":   4096,
-	"cogito:14b":   32768,
-	"cogito:8b":    8192,
+	"cogito:14b":         32768,
+	"cogito:8b":          8192,
+	"qwen2.5-coder:0.5b": 4096,
+	"qwen2.5-coder:1.5b": 4096,
+	"qwen2.5-coder:3b":   4096,
+	"qwen2.5-coder:7b":   32768,
+	"qwen2.5-coder:14b":  32768,
+	"qwen2.5-coder:32b":  32768,
 }
 
 // GetContextWindowForModel returns the appropriate context window for a given model.
@@ -189,10 +195,10 @@ func DefaultConfig() *Config {
 		Provider: ProviderOllama,
 		Ollama: OllamaConfig{
 			BaseURL:     "http://localhost:11434",
-			ModelFast:   "llama3.2:3b",
-			ModelSmart:  "qwen3:8b",
-			ModelGenius: "qwen3:14b",
-			KeepAlive:   "30m",
+			ModelFast:   "qwen2.5-coder:1.5b",
+			ModelSmart:  "qwen2.5-coder:7b",
+			ModelGenius: "qwen2.5-coder:7b",
+			KeepAlive:   "10m",
 		},
 		Agent: AgentConfig{
 			MaxRetries:          3,
@@ -232,8 +238,8 @@ func DefaultConfig() *Config {
 		VecgrepPath: "vecgrep",
 		RateLimit: RateLimitConfig{
 			MaxRetries:         3,
-			BaseDelay:          1 * time.Second,
-			MaxDelay:           30 * time.Second,
+			BaseDelay:          200 * time.Millisecond,
+			MaxDelay:           5 * time.Second,
 			TokensPerMinute:    0, // Not used for Ollama
 			EnableRateLimiting: false,
 		},

@@ -75,6 +75,7 @@ type OllamaOptions struct {
 	Temperature float64 `json:"temperature,omitempty"`
 	NumPredict  int     `json:"num_predict,omitempty"`
 	NumCtx      int     `json:"num_ctx,omitempty"`
+	NumThread   int     `json:"num_thread,omitempty"`
 }
 
 // OllamaChatResponse represents a chat response from Ollama
@@ -102,7 +103,6 @@ func NewOllamaClient(cfg *config.Config) *OllamaClient {
 		model:   cfg.GetDefaultModel(),
 		config:  cfg,
 		httpClient: &http.Client{
-			Timeout: 2 * time.Minute,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 5,
@@ -133,10 +133,43 @@ func (c *OllamaClient) GetModel() string {
 	return c.model
 }
 
-// Close cleans up the OllamaClient, closing idle HTTP connections.
+// Close cleans up the OllamaClient, unloading the model and closing idle HTTP connections.
 func (c *OllamaClient) Close() error {
+	// Best-effort model unload to free VRAM
+	c.unloadModel()
 	c.httpClient.CloseIdleConnections()
 	return nil
+}
+
+// unloadModel sends a keep_alive=0 request to Ollama to free VRAM.
+func (c *OllamaClient) unloadModel() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	currentModel := c.GetModel()
+	request := OllamaChatRequest{
+		Model:     currentModel,
+		Messages:  []OllamaMessage{},
+		Stream:    false,
+		KeepAlive: "0",
+	}
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // CheckHealthWithVersion verifies Ollama is running and returns the version string
@@ -183,6 +216,10 @@ func (c *OllamaClient) CheckHealth(ctx context.Context) error {
 
 // Chat sends a message and returns the response
 func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, systemPrompt string) (*Response, error) {
+	// Per-request timeout for non-streaming calls
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	// Snapshot model name under lock for consistent use throughout this call
 	currentModel := c.GetModel()
 
@@ -217,17 +254,20 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	numCtx := c.config.GetContextWindowForModel(currentModel)
 
+	opts := &OllamaOptions{
+		Temperature: c.config.Temperature,
+		NumPredict:  c.config.MaxTokens,
+		NumCtx:      numCtx,
+		NumThread:   c.config.Ollama.NumThread,
+	}
+
 	request := OllamaChatRequest{
 		Model:     currentModel,
 		Messages:  ollamaMessages,
 		Tools:     ollamaTools,
 		Stream:    false,
 		KeepAlive: c.config.Ollama.KeepAlive,
-		Options: &OllamaOptions{
-			Temperature: c.config.Temperature,
-			NumPredict:  c.config.MaxTokens,
-			NumCtx:      numCtx,
-		},
+		Options:   opts,
 	}
 
 	// Log full request payload if enabled
@@ -352,6 +392,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 				Temperature: c.config.Temperature,
 				NumPredict:  c.config.MaxTokens,
 				NumCtx:      numCtx,
+				NumThread:   c.config.Ollama.NumThread,
 			},
 		}
 
@@ -391,14 +432,14 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 		}
 
 		// Process NDJSON stream
-		c.processStream(ctx, resp.Body, ch, requestID, startTime)
+		c.processStream(ctx, resp.Body, ch, requestID, startTime, currentModel)
 	}()
 
 	return ch
 }
 
 // processStream processes the NDJSON stream from Ollama
-func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch chan<- StreamChunk, requestID string, startTime time.Time) {
+func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch chan<- StreamChunk, requestID string, startTime time.Time, currentModel string) {
 	decoder := json.NewDecoder(reader)
 
 	var usage *Usage
@@ -432,7 +473,7 @@ func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch c
 		if chunk.Error != "" {
 			var err error
 			if chunk.Error == "model not found" {
-				err = vecerr.LLMModelNotFound(c.model)
+				err = vecerr.LLMModelNotFound(currentModel)
 			} else {
 				err = vecerr.LLMRequestFailed(fmt.Errorf("ollama error: %s", chunk.Error))
 			}

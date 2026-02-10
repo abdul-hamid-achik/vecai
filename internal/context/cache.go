@@ -16,6 +16,7 @@ type ToolResultCache struct {
 	mu      sync.RWMutex
 	entries map[string]*CacheEntry
 	ttl     time.Duration
+	stop    chan struct{}
 }
 
 // CacheEntry represents a cached tool result
@@ -45,6 +46,7 @@ func NewToolResultCache(ttl time.Duration) *ToolResultCache {
 	cache := &ToolResultCache{
 		entries: make(map[string]*CacheEntry),
 		ttl:     ttl,
+		stop:    make(chan struct{}),
 	}
 	// Start background cleanup goroutine
 	go cache.cleanupLoop()
@@ -235,13 +237,28 @@ func (c *ToolResultCache) summarizeGeneric(lines []string, result string) string
 	return sb.String()
 }
 
+// Stop terminates the background cleanup goroutine.
+func (c *ToolResultCache) Stop() {
+	select {
+	case <-c.stop:
+		// Already stopped
+	default:
+		close(c.stop)
+	}
+}
+
 // cleanupLoop periodically removes expired entries
 func (c *ToolResultCache) cleanupLoop() {
 	ticker := time.NewTicker(c.ttl / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.cleanup()
+	for {
+		select {
+		case <-ticker.C:
+			c.cleanup()
+		case <-c.stop:
+			return
+		}
 	}
 }
 

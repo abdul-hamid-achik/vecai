@@ -5,8 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+)
+
+var (
+	vecgrepOnce sync.Once
+	vecgrepBin  string
 )
 
 // autoRAGSearch performs a vecgrep search for the query and returns
@@ -22,9 +29,11 @@ func (a *Agent) autoRAGSearch(ctx context.Context, query string) string {
 		return ""
 	}
 
-	// Check if vecgrep is available
-	vecgrepPath, err := exec.LookPath("vecgrep")
-	if err != nil || vecgrepPath == "" {
+	// Check if vecgrep is available (cached)
+	vecgrepOnce.Do(func() {
+		vecgrepBin, _ = exec.LookPath("vecgrep")
+	})
+	if vecgrepBin == "" {
 		return ""
 	}
 
@@ -46,7 +55,8 @@ func (a *Agent) autoRAGSearch(ctx context.Context, query string) string {
 		return ""
 	}
 
-	return formatRAGResults(stdout.Bytes())
+	contextWindow := a.config.GetContextWindowForModel(a.llm.GetModel())
+	return formatRAGResults(stdout.Bytes(), contextWindow)
 }
 
 // ragResult represents a single vecgrep search result
@@ -66,8 +76,8 @@ type ragResponse struct {
 }
 
 // formatRAGResults parses vecgrep JSON output and formats it as compact code context.
-// Caps total output at ~8000 chars (~2000 tokens).
-func formatRAGResults(data []byte) string {
+// Budget is 15% of the context window in chars, clamped to [3000, 12000].
+func formatRAGResults(data []byte, contextWindow int) string {
 	var resp ragResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return ""
@@ -77,7 +87,14 @@ func formatRAGResults(data []byte) string {
 		return ""
 	}
 
-	const maxChars = 8000
+	// ~4 chars per token, budget = 15% of context window
+	maxChars := contextWindow * 4 * 15 / 100
+	if maxChars < 3000 {
+		maxChars = 3000
+	}
+	if maxChars > 12000 {
+		maxChars = 12000
+	}
 	var b strings.Builder
 
 	for _, r := range resp.Results {
@@ -89,9 +106,9 @@ func formatRAGResults(data []byte) string {
 		header := r.File
 		if r.StartLine > 0 {
 			if r.EndLine > 0 && r.EndLine != r.StartLine {
-				header += ":" + itoa(r.StartLine) + "-" + itoa(r.EndLine)
+				header += ":" + strconv.Itoa(r.StartLine) + "-" + strconv.Itoa(r.EndLine)
 			} else {
-				header += ":" + itoa(r.StartLine)
+				header += ":" + strconv.Itoa(r.StartLine)
 			}
 		}
 
@@ -106,22 +123,3 @@ func formatRAGResults(data []byte) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// itoa is a simple int-to-string without importing strconv
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	if n < 0 {
-		return "-" + itoa(-n)
-	}
-	digits := make([]byte, 0, 10)
-	for n > 0 {
-		digits = append(digits, byte('0'+n%10))
-		n /= 10
-	}
-	// reverse
-	for i, j := 0, len(digits)-1; i < j; i, j = i+1, j-1 {
-		digits[i], digits[j] = digits[j], digits[i]
-	}
-	return string(digits)
-}
