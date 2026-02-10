@@ -202,6 +202,10 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 		ch.newSession(output, cmdCtx)
 		return true
 
+	case "/rewind":
+		ch.rewindCheckpoint(output)
+		return true
+
 	case "/software-architect", "/architect":
 		// Legacy: toggle between Ask and Build for backwards compat
 		if a.agentMode == tui.ModeBuild {
@@ -240,6 +244,7 @@ func (ch *CommandHandler) showHelp(output AgentOutput) {
 	output.Info("  /resume [id]     Resume a session (last if no id)")
 	output.Info("  /new             Start a new session")
 	output.Info("  /delete <id>     Delete a session")
+	output.Info("  /rewind          Undo last agent's file changes")
 	output.Info("  /clear           Clear conversation")
 	output.Info("  /exit            Exit interactive mode")
 	output.Info("")
@@ -403,6 +408,27 @@ func (ch *CommandHandler) switchMode(mode tui.AgentMode, output AgentOutput, cmd
 			logging.From(oldMode.String()),
 			logging.To(mode.String()),
 		)
+	}
+}
+
+// rewindCheckpoint restores files from the last checkpoint.
+func (ch *CommandHandler) rewindCheckpoint(output AgentOutput) {
+	a := ch.agent
+	if a.checkpointMgr == nil || !a.checkpointMgr.HasCheckpoints() {
+		output.Info("No checkpoints available to rewind")
+		return
+	}
+	restored, err := a.checkpointMgr.Rewind()
+	if err != nil {
+		output.Warning("Rewind completed with errors: " + err.Error())
+	}
+	if len(restored) == 0 {
+		output.Info("No files were changed in the last checkpoint")
+		return
+	}
+	output.Success(fmt.Sprintf("Rewound %d file(s):", len(restored)))
+	for _, path := range restored {
+		output.Info("  " + path)
 	}
 }
 

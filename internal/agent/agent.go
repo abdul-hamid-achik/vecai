@@ -89,7 +89,28 @@ vecgrep uses semantic embeddings that understand code MEANING, not just text mat
 - Format code blocks with language specifiers (e.g., ` + "```" + `go)
 - Use proper markdown lists: "1. Item" (with dot and space), "- Item" (with space after dash)
 - Use **bold** for emphasis, not plain text
-- Reference file paths and line numbers when discussing code`
+- Reference file paths and line numbers when discussing code
+
+## Tool Usage Examples
+
+Example 1 — Find and read a file:
+User: "How does the router work?"
+Assistant: I'll search for the router implementation.
+[calls vecgrep_search with query="router implementation"]
+Found router.go. Let me read it.
+[calls read_file with path="internal/agent/router.go"]
+
+Example 2 — Edit a file (always read first):
+User: "Add a timeout to the HTTP client"
+Assistant: Let me read the current implementation first.
+[calls read_file with path="internal/llm/ollama.go"]
+Now I'll add the timeout.
+[calls edit_file with path="internal/llm/ollama.go", old_text="...", new_text="..."]
+
+Example 3 — Search then grep for specifics:
+User: "Where is TierFast used?"
+Assistant: I'll search for TierFast usage.
+[calls grep with pattern="TierFast" include="*.go"]`
 
 // Config holds agent configuration
 type Config struct {
@@ -124,6 +145,8 @@ type Agent struct {
 	planner             *Planner
 	pipeline            *Pipeline
 	router              *TaskRouter
+	repoMap             *RepoMap
+	checkpointMgr       *CheckpointManager
 	calibrator          *ctxmgr.TokenCalibrator
 	sessionMgr          *session.Manager
 	memoryLayer         *memory.MemoryLayer // Unified memory access
@@ -232,9 +255,14 @@ func New(cfg Config) *Agent {
 		shutdownCtx:         shutdownCtx,
 		shutdownCancel:      shutdownCancel,
 	}
+	a.checkpointMgr = NewCheckpointManager()
 	a.toolExecutor = NewToolExecutor(cfg.Tools, cfg.Permissions, resultCache, cfg.AnalysisMode)
+	a.toolExecutor.checkpointMgr = a.checkpointMgr
 	a.commandHandler = NewCommandHandler(a)
 	a.planner = NewPlanner(a)
+	if wd, wdErr := os.Getwd(); wdErr == nil {
+		a.repoMap = NewRepoMap(wd)
+	}
 	a.calibrator = ctxmgr.NewTokenCalibrator(100)
 	a.pipeline = NewPipeline(PipelineConfig{
 		Client:      cfg.LLM,
@@ -410,6 +438,11 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 	adapter := runner.GetAdapter()
 	logDebug("TUI runner created")
 
+	// Set project root for vecgrep async search and file resolution
+	if wd, err := os.Getwd(); err == nil {
+		runner.SetProjectRoot(wd)
+	}
+
 	// Wire up mode change callback so Shift+Tab updates agent state
 	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
 		a.applyModeChange(mode, true)
@@ -428,9 +461,9 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 				// Set processing state to show spinner
 				adapter.Activity("Processing...")
 
-				// Execute the query
+				// Execute the query (no tagged files for initial query)
 				logDebug("Calling runWithTUIOutput")
-				err := a.runWithTUIOutput(initialQuery, adapter)
+				err := a.runWithTUIOutput(initialQuery, adapter, nil)
 				if err != nil {
 					logDebug("Query execution error: %v", err)
 					adapter.Error(err)
@@ -460,8 +493,12 @@ func (a *Agent) RunTUI(initialQuery string, interactive bool) error {
 			return
 		}
 
-		// Run query with TUI output
-		err := a.runWithTUIOutput(input, adapter)
+		// Collect tagged files before running query
+		taggedFiles := runner.GetTaggedFiles()
+		runner.ClearTaggedFiles()
+
+		// Run query with TUI output and tagged file context
+		err := a.runWithTUIOutput(input, adapter, taggedFiles)
 		if err != nil {
 			adapter.Error(err)
 			// Send StreamDone on error since runLoopTUI doesn't send it on error paths
@@ -538,6 +575,11 @@ func (a *Agent) RunInteractiveTUI() error {
 	runner := tui.NewTUIRunner(a.llm.GetModel())
 	adapter := runner.GetAdapter()
 
+	// Set project root for vecgrep async search and file resolution
+	if wd, err := os.Getwd(); err == nil {
+		runner.SetProjectRoot(wd)
+	}
+
 	// Wire up mode change callback so Shift+Tab updates agent state
 	runner.SetModeChangeCallback(func(mode tui.AgentMode) {
 		a.applyModeChange(mode, true)
@@ -605,8 +647,12 @@ func (a *Agent) RunInteractiveTUI() error {
 			}
 		}
 
-		// Run query with TUI output
-		err := a.runWithTUIOutput(input, adapter)
+		// Collect tagged files before running query
+		taggedFiles := runner.GetTaggedFiles()
+		runner.ClearTaggedFiles()
+
+		// Run query with TUI output and tagged file context
+		err := a.runWithTUIOutput(input, adapter, taggedFiles)
 		if err != nil {
 			adapter.Error(err)
 			adapter.StreamDone()
@@ -623,8 +669,9 @@ func (a *Agent) RunInteractiveTUI() error {
 	return runner.Run()
 }
 
-// runWithTUIOutput runs a query using the TUI adapter for output
-func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
+// runWithTUIOutput runs a query using the TUI adapter for output.
+// taggedFiles contains any @-tagged files from the user's input.
+func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter, taggedFiles []tui.TaggedFile) error {
 	ctx := context.Background()
 
 	// Track current query for smart tool selection
@@ -688,10 +735,71 @@ func (a *Agent) runWithTUIOutput(query string, adapter *tui.TUIAdapter) error {
 		Content: query,
 	})
 
+	// Inject tagged file context (similar to auto-RAG)
+	if len(taggedFiles) > 0 {
+		if fileCtx := formatTaggedFileContext(taggedFiles); fileCtx != "" {
+			a.contextMgr.AddMessage(llm.Message{
+				Role:    "user",
+				Content: "[Files provided by user via @mentions]\n" + fileCtx,
+			})
+			logDebug("Injected %d tagged file(s) into context", len(taggedFiles))
+		}
+	}
+
 	// Detect and record corrections for learning
 	a.detectAndRecordCorrection(query)
 
 	return a.runAgentLoop(ctx, tuiOut, tuiOut)
+}
+
+// RunHeadless executes a query in headless mode (no TUI, text output to stdout).
+func (a *Agent) RunHeadless(query string) error {
+	ctx := context.Background()
+	a.currentQuery = query
+
+	headlessOut := &HeadlessOutput{}
+	headlessIn := &HeadlessInput{}
+
+	// Auto-tier if enabled
+	if a.autoTier && !a.quickMode {
+		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		a.llm.SetTier(selectedTier)
+		a.syncContextWindow()
+	}
+
+	a.contextMgr.AddMessage(llm.Message{
+		Role:    "user",
+		Content: query,
+	})
+
+	return a.runAgentLoop(ctx, headlessOut, headlessIn)
+}
+
+// RunHeadlessJSON executes a query and outputs a single JSON result.
+func (a *Agent) RunHeadlessJSON(query string) error {
+	ctx := context.Background()
+	a.currentQuery = query
+
+	jsonOut := &JSONOutput{}
+	headlessIn := &HeadlessInput{}
+
+	// Auto-tier if enabled
+	if a.autoTier && !a.quickMode {
+		selectedTier := a.tierSelector.SelectTier(query, a.config.DefaultTier)
+		a.llm.SetTier(selectedTier)
+		a.syncContextWindow()
+	}
+
+	a.contextMgr.AddMessage(llm.Message{
+		Role:    "user",
+		Content: query,
+	})
+
+	err := a.runAgentLoop(ctx, jsonOut, headlessIn)
+	if emitErr := jsonOut.Emit(); emitErr != nil {
+		return emitErr
+	}
+	return err
 }
 
 // RunPlan runs in plan mode
@@ -771,6 +879,24 @@ func (a *Agent) getSystemPrompt() string {
 	// Existing: project instructions
 	if a.projectInstructions != "" {
 		sections = append(sections, "## Project-Specific Instructions\n\n"+a.projectInstructions)
+	}
+
+	// Active skill injection — match current query against skills
+	if a.skills != nil && a.currentQuery != "" {
+		if skill := a.skills.Match(a.currentQuery); skill != nil {
+			content := skill.GetPrompt()
+			if len(content) > 4000 {
+				content = content[:4000] + "\n[... skill content truncated]"
+			}
+			sections = append(sections, fmt.Sprintf("## Active Skill: %s\n\n%s", skill.Name, content))
+		}
+	}
+
+	// Repo map (skip in analysis mode — too heavy)
+	if !a.analysisMode && a.repoMap != nil {
+		if rm := a.repoMap.Get(); rm != "" {
+			sections = append(sections, rm)
+		}
 	}
 
 	// Memory context enrichment

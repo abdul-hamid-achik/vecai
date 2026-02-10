@@ -141,6 +141,27 @@ func (cm *ContextManager) GetMessages() []llm.Message {
 	return result
 }
 
+// GetMessagesWithMasking returns messages with old tool results masked when
+// context usage exceeds 60%. This reduces token usage without losing recent context.
+func (cm *ContextManager) GetMessagesWithMasking() []llm.Message {
+	cm.mu.Lock()
+	if cm.statsDirty {
+		cm.cachedTokens = cm.calculateTotalTokens()
+		cm.statsDirty = false
+	}
+	usagePercent := float64(cm.cachedTokens) / float64(cm.contextWindow)
+	// Copy messages while holding lock
+	msgs := make([]llm.Message, len(cm.messages))
+	copy(msgs, cm.messages)
+	cm.mu.Unlock()
+
+	// Only mask when usage > 60%
+	if usagePercent > 0.60 {
+		return MaskOldToolResults(msgs, DefaultPreserveRecent)
+	}
+	return msgs
+}
+
 // GetMessageCount returns the number of messages
 func (cm *ContextManager) GetMessageCount() int {
 	cm.mu.RLock()

@@ -16,9 +16,10 @@ type Message struct {
 
 // ToolCall represents a tool call from the LLM
 type ToolCall struct {
-	ID    string
-	Name  string
-	Input map[string]any
+	ID         string
+	Name       string
+	Input      map[string]any
+	ParseError string // Non-empty when arguments failed to parse (for retry feedback)
 }
 
 // Response represents an LLM response
@@ -59,6 +60,23 @@ type LLMClient interface {
 	SetTier(tier config.ModelTier)
 	GetModel() string
 	Close() error
+}
+
+// temperatureKey is the context key for per-request temperature overrides.
+type temperatureKey struct{}
+
+// WithTemperature returns a context with a temperature override for LLM requests.
+func WithTemperature(ctx context.Context, temp float64) context.Context {
+	return context.WithValue(ctx, temperatureKey{}, temp)
+}
+
+// GetTemperature extracts the temperature override from the context.
+// Returns the override value and true if set, or 0 and false if not.
+func GetTemperature(ctx context.Context) (float64, bool) {
+	if v, ok := ctx.Value(temperatureKey{}).(float64); ok {
+		return v, true
+	}
+	return 0, false
 }
 
 // Client is an alias for OllamaClient for backward compatibility

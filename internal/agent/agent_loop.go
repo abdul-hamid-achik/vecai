@@ -67,6 +67,12 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		}()
 	}
 
+	// Start a checkpoint for /rewind support
+	if a.checkpointMgr != nil {
+		a.checkpointMgr.StartCheckpoint(a.currentQuery)
+		defer a.checkpointMgr.CommitCheckpoint()
+	}
+
 	// Auto RAG: inject relevant code context before first LLM call
 	if a.currentQuery != "" && !a.analysisMode {
 		if ragCtx := a.autoRAGSearch(runCtx, a.currentQuery); ragCtx != "" {
@@ -76,6 +82,8 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 			})
 		}
 	}
+
+	consecutiveParseErrors := 0
 
 	for i := 0; i < maxIterations; i++ {
 		// Check for interrupt/cancellation before starting iteration
@@ -100,7 +108,14 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 
 		// Get tool definitions and call LLM
 		toolDefs := a.getToolDefinitions()
-		stream := a.llm.ChatStream(runCtx, a.contextMgr.GetMessages(), toolDefs, a.getSystemPrompt())
+
+		// Use lower temperature when tools are available (more deterministic tool calls)
+		llmCtx := runCtx
+		if len(toolDefs) > 0 {
+			llmCtx = llm.WithTemperature(runCtx, 0.1)
+		}
+
+		stream := a.llm.ChatStream(llmCtx, a.contextMgr.GetMessagesWithMasking(), toolDefs, a.getSystemPrompt())
 
 		var response llm.Response
 		var textContent strings.Builder
@@ -171,6 +186,21 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 			return nil
 		}
 
+		// Architect/Editor split: on the first iteration, if the model wants to write files,
+		// engage the architect (genius model) to plan, then editor (smart model) to execute.
+		if i == 0 && a.config.Agent.ArchitectEditorMode && hasWriteToolCalls(response.ToolCalls) && a.agentMode != tui.ModeAsk {
+			plan, archErr := a.architectPhase(runCtx, output)
+			if archErr != nil {
+				// Fall through to normal execution on failure
+				logWarn("Architect phase failed, falling back to normal: %v", archErr)
+			} else {
+				if edErr := a.editorPhase(runCtx, plan, output, input); edErr != nil {
+					return edErr
+				}
+				return nil
+			}
+		}
+
 		// Check for force-stop before executing tools
 		select {
 		case <-forceStop:
@@ -182,6 +212,24 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 
 		// Execute tool calls
 		toolResults := a.toolExecutor.ExecuteToolCalls(runCtx, response.ToolCalls, output, input)
+
+		// Track consecutive iterations where ALL tool calls had parse errors
+		allParseErrors := true
+		for _, result := range toolResults {
+			if !result.Error || !strings.Contains(result.Result, "could not parse arguments") {
+				allParseErrors = false
+			}
+		}
+		if allParseErrors && len(toolResults) > 0 {
+			consecutiveParseErrors++
+		} else {
+			consecutiveParseErrors = 0
+		}
+		if consecutiveParseErrors >= 3 {
+			output.Warning("Too many consecutive tool call parse errors — stopping")
+			output.StreamDone()
+			return nil
+		}
 
 		// Add individual tool result messages
 		for _, result := range toolResults {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	rtdebug "runtime/debug"
@@ -125,6 +126,29 @@ func run() error {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "-c" || args[i] == "--capture" {
 			captureMode = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
+	}
+
+	// Parse prompt flag (-p/--prompt) and JSON output flag (--json)
+	promptFlag := ""
+	jsonMode := false
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "-p" || args[i] == "--prompt") && i+1 < len(args) {
+			promptFlag = args[i+1]
+			args = append(args[:i], args[i+2:]...)
+			i--
+			continue
+		}
+		if strings.HasPrefix(args[i], "--prompt=") {
+			promptFlag = strings.TrimPrefix(args[i], "--prompt=")
+			args = append(args[:i], args[i+1:]...)
+			i--
+			continue
+		}
+		if args[i] == "--json" {
+			jsonMode = true
 			args = append(args[:i], args[i+1:]...)
 			i--
 		}
@@ -266,6 +290,37 @@ func run() error {
 		return handleModelsCommand(cfg, args[1:])
 	}
 
+	// Headless/pipe mode: -p flag or piped stdin
+	if promptFlag != "" || jsonMode {
+		query := promptFlag
+
+		// Read stdin if piped (non-TTY)
+		if stat, _ := os.Stdin.Stat(); stat != nil && stat.Mode()&os.ModeCharDevice == 0 {
+			stdinData, readErr := io.ReadAll(os.Stdin)
+			if readErr != nil {
+				return fmt.Errorf("failed to read stdin: %w", readErr)
+			}
+			stdinContent := strings.TrimSpace(string(stdinData))
+			if stdinContent != "" {
+				if query != "" {
+					query = query + "\n\n" + stdinContent
+				} else {
+					query = stdinContent
+				}
+			}
+		}
+
+		if query == "" {
+			return fmt.Errorf("no prompt provided (-p) and no stdin data")
+		}
+
+		logDebug("Headless mode: json=%v, query=%s", jsonMode, query)
+		if jsonMode {
+			return a.RunHeadlessJSON(query)
+		}
+		return a.RunHeadless(query)
+	}
+
 	// Quick mode: fast response, no tools
 	if quickMode && len(args) > 0 {
 		query := joinArgs(args)
@@ -311,6 +366,8 @@ Usage:
   vecai help              Show this help
 
 Flags:
+  -p, --prompt <text>     Headless mode: run prompt without TUI (pipe-friendly)
+  --json                  Output JSON instead of plain text (use with -p)
   -q, --quick             Quick mode: fast response, no tools (for simple questions)
   -c, --capture           Capture mode: prompt to save responses to notes
   --model <name>          Override model (e.g., "qwen3:8b", "qwen3:14b")

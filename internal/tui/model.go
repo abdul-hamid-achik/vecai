@@ -245,7 +245,20 @@ type Model struct {
 	agentMode AgentMode // Current mode: Ask, Plan, Build
 
 	// Autocomplete
-	completer *Completer // Slash command autocomplete (pointer survives model copies)
+	completer *Completer        // Legacy completer (kept for AddCommands bridge)
+	engine    *CompletionEngine // Unified completion engine (pointer survives model copies)
+
+	// File tagging (@mentions)
+	taggedFiles *[]TaggedFile // Files tagged with @ (pointer survives model copies)
+
+	// Vecgrep async completion state
+	vecgrepDebounceID *int    // Sequence counter for debouncing (pointer survives copies)
+	projectRoot       string  // Project root for vecgrep searches
+
+	// Proactive file suggestions
+	suggestDebounceID *int              // Sequence counter for suggest debouncing
+	suggestedFiles    *[]SuggestedFile  // Proactive suggestions (pointer survives copies)
+	suggestQuery      string            // Query that produced current suggestions
 
 	// Tool visualization
 	activeTools map[string]*ToolBlockMeta // Track running tools by GroupID
@@ -324,7 +337,12 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		maxQueueSize:  10,
 		callbacks:     &modelCallbacks{}, // Pointer survives copy to tea.Program
 		agentMode:     ModeBuild,         // Default to full execution mode
-		completer:     NewCompleter(),    // Pointer survives model copies
+		completer:     NewCompleter(),    // Legacy: kept for AddCommands bridge
+		engine:        NewCompletionEngine(NewSlashCommandProvider(), NewFileMentionProvider("")),
+		taggedFiles:       &[]TaggedFile{},
+		vecgrepDebounceID: new(int),
+		suggestDebounceID: new(int),
+		suggestedFiles:    &[]SuggestedFile{},
 		activeTools:   make(map[string]*ToolBlockMeta),
 		historyIdx:  -1,
 	}
@@ -555,6 +573,72 @@ func (m *Model) CycleAgentMode() AgentMode {
 // SetModeChangeCallback sets the callback for mode changes
 func (m *Model) SetModeChangeCallback(fn func(AgentMode)) {
 	m.callbacks.onModeChange = fn
+}
+
+// AddSkillCommands adds skill-based commands to both the legacy completer and the engine's slash provider
+func (m *Model) AddSkillCommands(cmds []CommandDef) {
+	m.completer.AddCommands(cmds) // Legacy bridge
+	if p, ok := m.engine.providers[TriggerSlash].(*SlashCommandProvider); ok {
+		p.AddCommands(cmds)
+	}
+}
+
+// GetCompletionEngine returns the completion engine
+func (m *Model) GetCompletionEngine() *CompletionEngine {
+	return m.engine
+}
+
+// AddTaggedFile adds a file to the tagged files list (deduplicates by path)
+func (m *Model) AddTaggedFile(f TaggedFile) {
+	for _, existing := range *m.taggedFiles {
+		if existing.RelPath == f.RelPath {
+			return // Already tagged
+		}
+	}
+	*m.taggedFiles = append(*m.taggedFiles, f)
+}
+
+// RemoveTaggedFile removes a file from the tagged files list
+func (m *Model) RemoveTaggedFile(relPath string) {
+	files := *m.taggedFiles
+	for i, f := range files {
+		if f.RelPath == relPath {
+			*m.taggedFiles = append(files[:i], files[i+1:]...)
+			return
+		}
+	}
+}
+
+// GetTaggedFiles returns the currently tagged files
+func (m *Model) GetTaggedFiles() []TaggedFile {
+	return *m.taggedFiles
+}
+
+// ClearTaggedFiles removes all tagged files
+func (m *Model) ClearTaggedFiles() {
+	*m.taggedFiles = (*m.taggedFiles)[:0]
+}
+
+// SetProjectRoot sets the project root for vecgrep searches and file resolution
+func (m *Model) SetProjectRoot(root string) {
+	m.projectRoot = root
+}
+
+// GetSuggestedFiles returns the current proactive file suggestions
+func (m *Model) GetSuggestedFiles() []SuggestedFile {
+	return *m.suggestedFiles
+}
+
+// SetSuggestedFiles updates the proactive file suggestions
+func (m *Model) SetSuggestedFiles(files []SuggestedFile, query string) {
+	*m.suggestedFiles = files
+	m.suggestQuery = query
+}
+
+// ClearSuggestions removes proactive file suggestions
+func (m *Model) ClearSuggestions() {
+	*m.suggestedFiles = (*m.suggestedFiles)[:0]
+	m.suggestQuery = ""
 }
 
 // GetConversationText returns the conversation as plain text for copying

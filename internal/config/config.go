@@ -21,17 +21,17 @@ const (
 type ModelTier string
 
 const (
-	TierFast   ModelTier = "fast"   // Fast model (qwen2.5-coder:1.5b)
+	TierFast   ModelTier = "fast"   // Fast model (qwen2.5-coder:3b)
 	TierSmart  ModelTier = "smart"  // Smart model (qwen2.5-coder:7b)
-	TierGenius ModelTier = "genius" // Genius model (qwen2.5-coder:7b)
+	TierGenius ModelTier = "genius" // Genius model (qwen2.5-coder:14b)
 )
 
 // OllamaConfig holds Ollama-specific configuration
 type OllamaConfig struct {
 	BaseURL     string `yaml:"base_url"`     // Default: "http://localhost:11434"
-	ModelFast   string `yaml:"model_fast"`   // Default: "qwen2.5-coder:1.5b"
+	ModelFast   string `yaml:"model_fast"`   // Default: "qwen2.5-coder:3b"
 	ModelSmart  string `yaml:"model_smart"`  // Default: "qwen2.5-coder:7b"
-	ModelGenius string `yaml:"model_genius"` // Default: "qwen2.5-coder:7b"
+	ModelGenius string `yaml:"model_genius"` // Default: "qwen2.5-coder:14b"
 	KeepAlive   string `yaml:"keep_alive"`   // Default: "10m"
 	NumCtx      int    `yaml:"num_ctx"`      // Explicit num_ctx override (0 = use model default)
 	NumThread   int    `yaml:"num_thread"`   // Explicit num_thread override (0 = Ollama default)
@@ -86,6 +86,7 @@ type AgentConfig struct {
 	MaxRetries          int  `yaml:"max_retries"`          // Max retries per step (default: 3)
 	MaxIterations       int  `yaml:"max_iterations"`       // Max agent loop iterations (default: 20)
 	VerificationEnabled bool `yaml:"verification_enabled"` // Enable verification agent (default: true)
+	ArchitectEditorMode bool `yaml:"architect_editor_mode"` // Enable architect/editor split (default: true)
 }
 
 // ParallelConfig holds parallel tool execution configuration
@@ -195,15 +196,16 @@ func DefaultConfig() *Config {
 		Provider: ProviderOllama,
 		Ollama: OllamaConfig{
 			BaseURL:     "http://localhost:11434",
-			ModelFast:   "qwen2.5-coder:1.5b",
+			ModelFast:   "qwen2.5-coder:3b",
 			ModelSmart:  "qwen2.5-coder:7b",
-			ModelGenius: "qwen2.5-coder:7b",
+			ModelGenius: "qwen2.5-coder:14b",
 			KeepAlive:   "10m",
 		},
 		Agent: AgentConfig{
 			MaxRetries:          3,
 			MaxIterations:       20,
 			VerificationEnabled: true,
+			ArchitectEditorMode: true,
 		},
 		Memory: MemoryConfig{
 			Enabled:         true,
@@ -248,7 +250,7 @@ func DefaultConfig() *Config {
 			WarnThreshold:        0.50,
 			PreserveLast:         2,
 			EnableAutoCompact:    true,
-			ContextWindow:        8192, // Optimized for speed with llama3.2:3b
+			ContextWindow:        32768, // 14b supports 32K, 7b supports 32K, 3b caps at 4096 via ModelContextWindows
 		},
 		Analysis: AnalysisConfig{
 			Enabled:            false,

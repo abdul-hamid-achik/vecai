@@ -545,8 +545,11 @@ func TestModelCompleterInitialized(t *testing.T) {
 	if model.completer == nil {
 		t.Fatal("Expected completer to be initialized")
 	}
-	if model.completer.IsActive() {
-		t.Error("Expected completer to be inactive initially")
+	if model.engine == nil {
+		t.Fatal("Expected completion engine to be initialized")
+	}
+	if model.engine.IsActive() {
+		t.Error("Expected completion engine to be inactive initially")
 	}
 }
 

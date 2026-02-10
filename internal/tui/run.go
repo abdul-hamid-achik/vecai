@@ -183,7 +183,7 @@ func (r *TUIRunner) SetModeChangeCallback(fn func(AgentMode)) {
 
 // AddSkillCommands adds skill-based commands to the autocomplete dropdown
 func (r *TUIRunner) AddSkillCommands(cmds []CommandDef) {
-	r.model.completer.AddCommands(cmds)
+	r.model.AddSkillCommands(cmds)
 }
 
 // GetReadyChan returns a channel that closes when TUI is ready
@@ -224,6 +224,21 @@ func (r *TUIRunner) Quit() {
 // ClearQueue clears all queued inputs
 func (r *TUIRunner) ClearQueue() {
 	r.model.ClearQueue()
+}
+
+// GetTaggedFiles returns the currently tagged files
+func (r *TUIRunner) GetTaggedFiles() []TaggedFile {
+	return r.model.GetTaggedFiles()
+}
+
+// ClearTaggedFiles removes all tagged files
+func (r *TUIRunner) ClearTaggedFiles() {
+	r.model.ClearTaggedFiles()
+}
+
+// SetProjectRoot sets the project root for vecgrep async searches
+func (r *TUIRunner) SetProjectRoot(root string) {
+	r.model.SetProjectRoot(root)
 }
 
 // GetConversationText returns the conversation as plain text for copying

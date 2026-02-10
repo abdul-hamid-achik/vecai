@@ -53,6 +53,40 @@ type TickMsg struct{}
 // RenderTickMsg is sent to trigger a debounced markdown re-render during streaming
 type RenderTickMsg struct{}
 
+// VecgrepCompletionMsg delivers async vecgrep search results to the completion engine
+type VecgrepCompletionMsg struct {
+	Items      []CompletionItem // Vecgrep search results
+	Query      string           // The query that produced these results
+	DebounceID int              // Debounce sequence number (stale results are ignored)
+}
+
+// VecgrepDebounceMsg fires after the debounce delay to trigger a vecgrep search
+type VecgrepDebounceMsg struct {
+	Query        string // Text after @ trigger
+	QueryContext string // Text before @ trigger (for context-aware search)
+	DebounceID   int
+}
+
+// SuggestDebounceMsg fires after typing delay to trigger proactive file suggestions
+type SuggestDebounceMsg struct {
+	Query      string
+	DebounceID int
+}
+
+// SuggestResultMsg delivers proactive file suggestion results
+type SuggestResultMsg struct {
+	Files      []SuggestedFile
+	Query      string
+	DebounceID int
+}
+
+// SuggestedFile is a proactively suggested file the user might want to tag
+type SuggestedFile struct {
+	RelPath  string
+	Language string
+	Score    float64
+}
+
 // PermissionResponseMsg is sent when user responds to a permission prompt
 type PermissionResponseMsg struct {
 	Decision string

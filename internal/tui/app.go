@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -93,6 +95,72 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tickCmd()
 		}
+		return m, nil
+
+	case VecgrepDebounceMsg:
+		// Debounce expired — check if this is still the current query
+		if msg.DebounceID != *m.vecgrepDebounceID {
+			return m, nil // Stale debounce, ignore
+		}
+		// Fire async vecgrep search in goroutine
+		query := msg.Query
+		queryCtx := msg.QueryContext
+		debounceID := msg.DebounceID
+		projectRoot := m.projectRoot
+		return m, func() tea.Msg {
+			items := SearchVecgrep(context.Background(), query, queryCtx, projectRoot, 8)
+			return VecgrepCompletionMsg{
+				Items:      items,
+				Query:      query,
+				DebounceID: debounceID,
+			}
+		}
+
+	case VecgrepCompletionMsg:
+		// Async vecgrep results arrived — merge if still relevant
+		if msg.DebounceID != *m.vecgrepDebounceID {
+			return m, nil // Stale results, ignore
+		}
+		if m.engine.IsActive() && m.engine.ActiveTrigger() == TriggerAt {
+			m.engine.MergeAsyncResults(msg.Items)
+		}
+		return m, nil
+
+	case SuggestDebounceMsg:
+		// Proactive suggestion debounce expired
+		if msg.DebounceID != *m.suggestDebounceID {
+			return m, nil // Stale
+		}
+		query := msg.Query
+		debounceID := msg.DebounceID
+		projectRoot := m.projectRoot
+		return m, func() tea.Msg {
+			items := SearchVecgrep(context.Background(), query, "", projectRoot, 3)
+			var files []SuggestedFile
+			for _, item := range items {
+				relPath := item.Label
+				if item.Detail != "" {
+					relPath = item.Detail + "/" + item.Label
+				}
+				files = append(files, SuggestedFile{
+					RelPath:  relPath,
+					Language: item.Language,
+					Score:    item.Score,
+				})
+			}
+			return SuggestResultMsg{
+				Files:      files,
+				Query:      query,
+				DebounceID: debounceID,
+			}
+		}
+
+	case SuggestResultMsg:
+		// Proactive suggestions arrived
+		if msg.DebounceID != *m.suggestDebounceID {
+			return m, nil // Stale
+		}
+		m.SetSuggestedFiles(msg.Files, msg.Query)
 		return m, nil
 
 	case RenderTickMsg:
@@ -228,35 +296,42 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Handle completer when active (intercept before viewport scrolling)
-	if m.completer.IsActive() {
+	// Handle completion engine when active (intercept before viewport scrolling)
+	if m.engine.IsActive() {
 		switch msg.Type {
 		case tea.KeyUp:
-			m.completer.MoveUp()
+			m.engine.MoveUp()
 			return m, nil
 		case tea.KeyDown:
-			m.completer.MoveDown()
+			m.engine.MoveDown()
 			return m, nil
 		case tea.KeyTab:
 			// Accept selection, fill input (don't submit)
-			accepted := m.completer.Accept()
-			if accepted != "" {
-				m.textArea.SetValue(accepted)
+			item := m.engine.Accept()
+			if item.InsertText != "" {
+				m.textArea.SetValue(item.InsertText)
 				m.textArea.CursorEnd()
 			}
 			return m, nil
 		case tea.KeyEnter:
-			// Accept and submit
-			accepted := m.completer.Accept()
-			if accepted != "" {
-				m.textArea.Reset()
-				if m.callbacks.onSubmit != nil {
-					go m.callbacks.onSubmit(accepted)
+			// Accept — behavior depends on item kind
+			item := m.engine.Accept()
+			if item.InsertText != "" {
+				if item.Kind == KindCommand || item.Kind == KindArgument {
+					// Commands: accept and submit immediately
+					m.textArea.Reset()
+					if m.callbacks.onSubmit != nil {
+						go m.callbacks.onSubmit(item.InsertText)
+					}
+				} else {
+					// Files/chunks: insert text, don't submit (user continues typing)
+					m.textArea.SetValue(item.InsertText)
+					m.textArea.CursorEnd()
 				}
 			}
 			return m, nil
 		case tea.KeyEsc:
-			m.completer.Dismiss()
+			m.engine.Dismiss()
 			return m, nil
 		}
 	}
@@ -347,7 +422,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle Up/Down for history navigation when textarea is empty or single-line
-	if msg.Type == tea.KeyUp && m.textArea.Value() == "" && !m.completer.IsActive() {
+	if msg.Type == tea.KeyUp && m.textArea.Value() == "" && !m.engine.IsActive() {
 		if len(m.inputHistory) > 0 {
 			if m.historyIdx == -1 {
 				// Entering history mode: save current input
@@ -361,7 +436,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	if msg.Type == tea.KeyDown && m.historyIdx >= 0 && !m.completer.IsActive() {
+	if msg.Type == tea.KeyDown && m.historyIdx >= 0 && !m.engine.IsActive() {
 		m.historyIdx--
 		if m.historyIdx < 0 {
 			// Back to current (pre-history) input
@@ -391,7 +466,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.textArea.Reset()
 		m.textArea.SetHeight(1) // Reset to single line
-		m.completer.Dismiss()
+		m.engine.Dismiss()
 		m.recalcFooterHeight()
 
 		// Slash commands execute immediately (bypass queue)
@@ -402,9 +477,22 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Parse @file mentions from input and resolve absolute paths
+		parsed := ParseFileTags(input, m.projectRoot)
+		for _, tag := range parsed.NewTags {
+			if tag.AbsPath == "" && m.projectRoot != "" {
+				tag.AbsPath = filepath.Join(m.projectRoot, tag.RelPath)
+			}
+			m.AddTaggedFile(tag)
+		}
+		submitText := input
+		if parsed.CleanQuery != "" {
+			submitText = parsed.CleanQuery
+		}
+
 		// If idle, execute immediately
 		if m.state == StateIdle {
-			// Add user message to blocks
+			// Add user message to blocks (show original input with @mentions)
 			m.AddBlock(ContentBlock{
 				Type:    BlockUser,
 				Content: input,
@@ -416,9 +504,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.loopIteration = 0
 			m.loopStartTime = time.Now()
 
-			// Call submit callback if set
+			// Call submit callback with clean query
 			if m.callbacks.onSubmit != nil {
-				go m.callbacks.onSubmit(input)
+				go m.callbacks.onSubmit(submitText)
 			}
 
 			return m, tea.Batch(m.waitForStream(), startSpinner(&m))
@@ -426,7 +514,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// If busy (streaming or rate limited), queue the input
 		if m.state == StateStreaming || m.state == StateRateLimited {
-			if !m.QueueInput(input) {
+			if !m.QueueInput(submitText) {
 				m.AddBlock(ContentBlock{Type: BlockWarning, Content: "Queue full (max 10)"})
 				return m, nil
 			}
@@ -449,12 +537,46 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.historyIdx = -1
 	}
 
-	// Update completer after each keystroke
-	m.completer.Update(m.textArea.Value())
+	// Update completion engine after each keystroke
+	m.engine.Update(m.textArea.Value())
+
+	// If @ completion is active, start debounced vecgrep search
+	var extraCmds []tea.Cmd
+	fullInput := m.textArea.Value()
+	if m.engine.IsActive() && m.engine.ActiveTrigger() == TriggerAt && m.engine.query != "" {
+		*m.vecgrepDebounceID++
+		debounceID := *m.vecgrepDebounceID
+		query := m.engine.query
+		// Extract query context: text before the @ trigger
+		queryCtx := ""
+		if atIdx := findActiveTrigger(fullInput, '@'); atIdx > 0 {
+			queryCtx = strings.TrimSpace(fullInput[:atIdx])
+		}
+		m.engine.SetLoading(true)
+		extraCmds = append(extraCmds, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
+			return VecgrepDebounceMsg{Query: query, QueryContext: queryCtx, DebounceID: debounceID}
+		}))
+	}
+
+	// Proactive file suggestions: when user types 15+ chars without @, suggest files
+	if !m.engine.IsActive() && len(fullInput) >= 15 && !strings.Contains(fullInput, "@") && !strings.HasPrefix(fullInput, "/") {
+		*m.suggestDebounceID++
+		debounceID := *m.suggestDebounceID
+		query := strings.TrimSpace(fullInput)
+		extraCmds = append(extraCmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+			return SuggestDebounceMsg{Query: query, DebounceID: debounceID}
+		}))
+	} else if len(fullInput) < 15 || strings.HasPrefix(fullInput, "/") {
+		// Clear suggestions when input shrinks or is a command
+		m.ClearSuggestions()
+	}
 
 	// Recalculate footer/viewport height
 	m.recalcFooterHeight()
 
+	if len(extraCmds) > 0 {
+		return m, tea.Batch(append([]tea.Cmd{cmd}, extraCmds...)...)
+	}
 	return m, cmd
 }
 
@@ -837,18 +959,12 @@ func tickCmd() tea.Cmd {
 // recalcFooterHeight recalculates the footer height based on textarea and completer state
 func (m *Model) recalcFooterHeight() {
 	completerLines := 0
-	if m.completer.IsActive() {
-		visible := m.completer.VisibleCount()
-		if visible > m.completer.maxVisible {
-			visible = m.completer.maxVisible
-		}
+	if m.engine.IsActive() {
+		visible := min(m.engine.VisibleCount(), m.engine.maxVisible)
 		completerLines = visible + 1 // +1 for separator
 	}
 	// Textarea height: min 1, max 5
-	taLines := m.textArea.LineCount()
-	if taLines < 1 {
-		taLines = 1
-	}
+	taLines := max(m.textArea.LineCount(), 1)
 	if taLines > 5 {
 		taLines = 5
 	}

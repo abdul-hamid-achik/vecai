@@ -72,10 +72,11 @@ func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previou
 	// Get appropriate tools based on step type
 	toolDefs := e.getToolsForStepType(step.Type)
 
-	// Execute with tool loop
+	// Execute with tool loop — use low temperature for deterministic tool calls
+	execCtx := llm.WithTemperature(ctx, 0.1)
 	maxIterations := 7
 	for i := 0; i < maxIterations; i++ {
-		resp, err := e.client.Chat(ctx, messages, toolDefs, systemPrompt)
+		resp, err := e.client.Chat(execCtx, messages, toolDefs, systemPrompt)
 		if err != nil {
 			result.Error = fmt.Errorf("LLM call failed: %w", err)
 			return result, nil
@@ -144,10 +145,11 @@ func (e *ExecutorAgent) ExecuteDirectTask(ctx context.Context, task string, inte
 		{Role: "user", Content: task},
 	}
 
-	// Execute with tool loop
+	// Execute with tool loop — use low temperature for deterministic tool calls
+	directCtx := llm.WithTemperature(ctx, 0.1)
 	maxIterations := 10
 	for i := 0; i < maxIterations; i++ {
-		resp, err := e.client.Chat(ctx, messages, toolDefs, systemPrompt)
+		resp, err := e.client.Chat(directCtx, messages, toolDefs, systemPrompt)
 		if err != nil {
 			result.Error = fmt.Errorf("LLM call failed: %w", err)
 			return result, nil

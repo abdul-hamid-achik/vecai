@@ -354,9 +354,9 @@ func (m Model) renderFooter() string {
 	b.WriteString(m.renderStatusBar())
 	b.WriteString("\n")
 
-	// Show completer dropdown above input if active
-	if m.completer.IsActive() {
-		dropdown := m.completer.Render(m.width)
+	// Show completion dropdown above input if active
+	if m.engine.IsActive() {
+		dropdown := m.engine.Render(m.width)
 		if dropdown != "" {
 			b.WriteString(dropdown)
 			b.WriteString("\n")
@@ -454,6 +454,24 @@ func (m Model) renderStatusBar() string {
 	// Show "new content below" indicator when user has scrolled up
 	if m.newContentPending && m.userScrolledUp {
 		parts = append(parts, warningStyle.Render("↓ New content (End to jump)"))
+	}
+
+	// Show tagged file chips if any
+	if tags := m.GetTaggedFiles(); len(tags) > 0 {
+		availWidth := m.width - lipgloss.Width(strings.Join(parts, "   ")) - 6
+		if chips := renderFileTagChips(tags, availWidth); chips != "" {
+			parts = append(parts, chips)
+		}
+	}
+
+	// Show proactive file suggestions (only when idle and no tags)
+	if m.state == StateIdle && len(m.GetTaggedFiles()) == 0 {
+		if suggestions := m.GetSuggestedFiles(); len(suggestions) > 0 {
+			hint := renderSuggestHint(suggestions, m.width-lipgloss.Width(strings.Join(parts, "   "))-6)
+			if hint != "" {
+				parts = append(parts, hint)
+			}
+		}
 	}
 
 	// Show contextual hint based on state

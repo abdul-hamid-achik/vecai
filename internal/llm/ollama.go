@@ -254,8 +254,13 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	numCtx := c.config.GetContextWindowForModel(currentModel)
 
+	temperature := c.config.Temperature
+	if override, ok := GetTemperature(ctx); ok {
+		temperature = override
+	}
+
 	opts := &OllamaOptions{
-		Temperature: c.config.Temperature,
+		Temperature: temperature,
 		NumPredict:  c.config.MaxTokens,
 		NumCtx:      numCtx,
 		NumThread:   c.config.Ollama.NumThread,
@@ -275,7 +280,7 @@ func (c *OllamaClient) Chat(ctx context.Context, messages []Message, tools []Too
 		"model":       currentModel,
 		"messages":    len(ollamaMessages),
 		"tools":       len(ollamaTools),
-		"temperature": c.config.Temperature,
+		"temperature": temperature,
 		"max_tokens":  c.config.MaxTokens,
 	})
 
@@ -382,6 +387,11 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 
 		numCtx := c.config.GetContextWindowForModel(currentModel)
 
+		temperature := c.config.Temperature
+		if override, ok := GetTemperature(ctx); ok {
+			temperature = override
+		}
+
 		request := OllamaChatRequest{
 			Model:     currentModel,
 			Messages:  ollamaMessages,
@@ -389,7 +399,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 			Stream:    true,
 			KeepAlive: c.config.Ollama.KeepAlive,
 			Options: &OllamaOptions{
-				Temperature: c.config.Temperature,
+				Temperature: temperature,
 				NumPredict:  c.config.MaxTokens,
 				NumCtx:      numCtx,
 				NumThread:   c.config.Ollama.NumThread,
@@ -489,21 +499,24 @@ func (c *OllamaClient) processStream(ctx context.Context, reader io.Reader, ch c
 
 		// Process tool calls
 		for _, tc := range chunk.Message.ToolCalls {
-			input, err := parseToolArguments(tc.Function.Arguments)
-			if err != nil {
+			input, parseErr := parseToolArguments(tc.Function.Arguments)
+			var parseErrStr string
+			if parseErr != nil {
 				if log := logging.Global(); log != nil {
 					log.Warn("failed to parse tool arguments",
 						logging.ToolName(tc.Function.Name),
-						logging.Error(err),
+						logging.Error(parseErr),
 					)
 				}
 				input = make(map[string]any)
+				parseErrStr = parseErr.Error()
 			}
 
 			toolCall := ToolCall{
-				ID:    tc.ID,
-				Name:  tc.Function.Name,
-				Input: input,
+				ID:         tc.ID,
+				Name:       tc.Function.Name,
+				Input:      input,
+				ParseError: parseErrStr,
 			}
 			ch <- StreamChunk{Type: "tool_call", ToolCall: &toolCall}
 		}
@@ -592,21 +605,24 @@ func (c *OllamaClient) parseResponse(resp *OllamaChatResponse) *Response {
 
 	// Parse tool calls
 	for _, tc := range resp.Message.ToolCalls {
-		input, err := parseToolArguments(tc.Function.Arguments)
-		if err != nil {
+		input, parseErr := parseToolArguments(tc.Function.Arguments)
+		var parseErrStr string
+		if parseErr != nil {
 			if log := logging.Global(); log != nil {
 				log.Warn("failed to parse tool arguments",
 					logging.ToolName(tc.Function.Name),
-					logging.Error(err),
+					logging.Error(parseErr),
 				)
 			}
 			input = make(map[string]any)
+			parseErrStr = parseErr.Error()
 		}
 
 		result.ToolCalls = append(result.ToolCalls, ToolCall{
-			ID:    tc.ID,
-			Name:  tc.Function.Name,
-			Input: input,
+			ID:         tc.ID,
+			Name:       tc.Function.Name,
+			Input:      input,
+			ParseError: parseErrStr,
 		})
 	}
 

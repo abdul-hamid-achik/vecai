@@ -33,11 +33,12 @@ func truncateToolOutput(result string) string {
 
 // ToolExecutor handles tool execution with unified output.
 type ToolExecutor struct {
-	tools        *tools.Registry
-	permissions  *permissions.Policy
-	resultCache  *ctxmgr.ToolResultCache
-	parallelExec *parallelExecutor
-	analysisMode bool
+	tools         *tools.Registry
+	permissions   *permissions.Policy
+	resultCache   *ctxmgr.ToolResultCache
+	parallelExec  *parallelExecutor
+	analysisMode  bool
+	checkpointMgr *CheckpointManager // Optional: records file state before writes
 }
 
 // NewToolExecutor creates a new ToolExecutor.
@@ -97,6 +98,23 @@ func (te *ToolExecutor) ExecuteToolCalls(ctx context.Context, calls []llm.ToolCa
 		}
 
 		callID := call.ID
+
+		// If the LLM produced unparseable arguments, return error feedback
+		// so the model can learn the correct format and retry
+		if call.ParseError != "" {
+			debug.ToolResult(call.Name, false, 0)
+			errMsg := fmt.Sprintf("Tool call '%s' failed: could not parse arguments (%s). "+
+				"Please provide arguments as a valid JSON object. Example: {\"path\": \"file.go\"}", call.Name, call.ParseError)
+			results = append(results, toolResult{
+				Name:       call.Name,
+				Result:     errMsg,
+				Error:      true,
+				ToolCallID: callID,
+			})
+			output.ToolResult(call.Name, errMsg, true)
+			continue
+		}
+
 		debug.ToolCall(call.Name, call.Input)
 
 		tool, ok := te.tools.Get(call.Name)
@@ -141,6 +159,13 @@ func (te *ToolExecutor) ExecuteToolCalls(ctx context.Context, calls []llm.ToolCa
 
 		// Show tool call after permission granted
 		output.ToolCall(call.Name, description)
+
+		// Save file state before write operations for /rewind
+		if te.checkpointMgr != nil && (call.Name == "write_file" || call.Name == "edit_file") {
+			if path, ok := call.Input["path"].(string); ok {
+				te.checkpointMgr.SaveFileState(path)
+			}
+		}
 
 		// Execute tool
 		result, err := tool.Execute(ctx, call.Input)
