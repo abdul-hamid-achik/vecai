@@ -133,6 +133,11 @@ func (c *OllamaClient) GetModel() string {
 	return c.model
 }
 
+// Fork returns a TierClient sharing this client's HTTP transport but with an independent model field.
+func (c *OllamaClient) Fork() LLMClient {
+	return NewTierClient(c)
+}
+
 // Close cleans up the OllamaClient, unloading the model and closing idle HTTP connections.
 func (c *OllamaClient) Close() error {
 	// Best-effort model unload to free VRAM
@@ -377,6 +382,13 @@ func (c *OllamaClient) ChatStream(ctx context.Context, messages []Message, tools
 
 	go func() {
 		defer close(ch)
+
+		// Add a default timeout if context has no deadline
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+		}
 
 		debug.LLMRequest(requestID, currentModel, len(messages), len(tools))
 		startTime := time.Now()

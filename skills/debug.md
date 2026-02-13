@@ -3,10 +3,9 @@ name: debug
 description: Debug issues and errors
 triggers:
   - "debug"
-  - "error"
-  - "bug"
+  - "/\\b(error|bug|fix|broken|crash|panic|fault)\\b.*(code|function|method|file|module|package|test|build|compile)/"
+  - "/\\b(code|function|method|file|module|package|test|build|compile)\\b.*(error|bug|fix|broken|crash|panic|fault)/"
   - "not working"
-  - "fix"
   - "/fix/"
 tags:
   - debugging

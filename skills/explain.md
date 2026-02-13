@@ -2,9 +2,8 @@
 name: explain
 description: Explain code and architecture
 triggers:
-  - "explain"
-  - "how does"
-  - "what does"
+  - "/\\b(explain|how does|what does)\\b.*(code|function|method|class|module|package|file|implementation|logic|algorithm|pattern)/"
+  - "/\\b(code|function|method|class|module|package|file|implementation|logic|algorithm|pattern)\\b.*(explain|how does|what does|work)/"
   - "understand"
   - "/explain/"
 tags:

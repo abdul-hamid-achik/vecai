@@ -2,8 +2,10 @@ package context
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 )
@@ -46,8 +48,9 @@ type LearningsCallback func(learnings []string)
 
 // Compactor handles conversation compaction using LLM summarization
 type Compactor struct {
-	llmClient          llm.LLMClient
-	learningsCallback  LearningsCallback
+	llmClient         llm.LLMClient
+	learningsCallback LearningsCallback
+	wg                sync.WaitGroup
 }
 
 // NewCompactor creates a new compactor
@@ -55,6 +58,11 @@ func NewCompactor(client llm.LLMClient) *Compactor {
 	return &Compactor{
 		llmClient: client,
 	}
+}
+
+// Close waits for any in-flight background goroutines to finish.
+func (c *Compactor) Close() {
+	c.wg.Wait()
 }
 
 // SetLearningsCallback sets a callback to receive extracted learnings during compaction
@@ -122,7 +130,11 @@ func (c *Compactor) Compact(ctx context.Context, req CompactRequest) (*CompactRe
 
 	// Extract and save learnings if callback is set and we have enough conversation
 	if c.learningsCallback != nil && len(toSummarize) > 2 {
-		go c.extractAndSaveLearnings(ctx, toSummarize)
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.extractAndSaveLearnings(ctx, toSummarize)
+		}()
 	}
 
 	return &CompactResult{
@@ -216,27 +228,18 @@ func parseLearningsResponse(content string) []string {
 
 	jsonStr := content[start : end+1]
 
-	// Simple JSON array parsing (avoid importing encoding/json to keep package lightweight)
-	// Expected format: ["learning1", "learning2"]
-	jsonStr = strings.TrimPrefix(jsonStr, "[")
-	jsonStr = strings.TrimSuffix(jsonStr, "]")
-	jsonStr = strings.TrimSpace(jsonStr)
-
-	if jsonStr == "" {
+	var learnings []string
+	if err := json.Unmarshal([]byte(jsonStr), &learnings); err != nil {
 		return nil
 	}
 
-	var learnings []string
-	// Split by ", " pattern between strings
-	parts := strings.Split(jsonStr, "\",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		part = strings.Trim(part, "\"")
-		part = strings.TrimSpace(part)
-		if part != "" {
-			learnings = append(learnings, part)
+	// Filter out empty strings
+	filtered := learnings[:0]
+	for _, l := range learnings {
+		if strings.TrimSpace(l) != "" {
+			filtered = append(filtered, l)
 		}
 	}
 
-	return learnings
+	return filtered
 }

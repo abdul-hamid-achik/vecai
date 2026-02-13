@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // runGpeek executes gpeek with the given arguments and returns the output
 func runGpeek(ctx context.Context, args ...string) ([]byte, error) {
 	// Always request JSON output
 	args = append(args, "--format", "json")
+
+	// Apply a 30-second timeout to prevent runaway gpeek commands
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "gpeek", args...)
 	var stdout, stderr bytes.Buffer
@@ -823,7 +828,11 @@ func formatStashesResponse(jsonOutput []byte) (string, error) {
 			branch = fmt.Sprintf(" on %s", s.Branch)
 		}
 		sb.WriteString(fmt.Sprintf("**stash@{%d}**%s: %s\n", s.Index, branch, s.Message))
-		sb.WriteString(fmt.Sprintf("  %s | %s\n\n", s.Hash[:8], s.TimeAgo))
+		shortHash := s.Hash
+		if len(shortHash) >= 8 {
+			shortHash = shortHash[:8]
+		}
+		sb.WriteString(fmt.Sprintf("  %s | %s\n\n", shortHash, s.TimeAgo))
 	}
 
 	return sb.String(), nil

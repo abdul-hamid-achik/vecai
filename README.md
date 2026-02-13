@@ -2,6 +2,16 @@
 
 AI-powered codebase assistant that combines semantic search with local LLM intelligence to help you understand, navigate, and modify code.
 
+## What is vecai?
+
+vecai is a terminal-based AI coding assistant that runs entirely on your machine using [Ollama](https://ollama.ai). It connects to your local LLM to help you explore, understand, and modify codebases through natural language. Unlike cloud-based tools, your code never leaves your machine.
+
+Key capabilities:
+- **Semantic code search** via [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) embeddings
+- **Autonomous tool use** -- the agent reads files, searches code, and runs commands on your behalf
+- **Three agent modes** -- Ask (read-only), Plan (analysis), Build (full access)
+- **Smart tier selection** -- automatically picks the right model size for each query
+
 ## Features
 
 - **Semantic Code Search** - Find code by meaning, not just keywords (via vecgrep)
@@ -20,6 +30,14 @@ AI-powered codebase assistant that combines semantic search with local LLM intel
 - **Analysis Mode** - Token-efficient read-only mode for code reviews
 - **Context Management** - Auto-compaction to handle long conversations
 - **Capture Mode** - Save responses to notes for future reference
+
+## Prerequisites
+
+- [Go](https://go.dev) 1.24+ (for building from source)
+- [Ollama](https://ollama.ai) - Local LLM server (required)
+- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) - Semantic code search (optional)
+- [gpeek](https://github.com/abdul-hamid-achik/gpeek) - Git visualization (optional)
+- [noted](https://github.com/abdul-hamid-achik/noted) - Persistent memory (optional)
 
 ## Quick Start
 
@@ -70,13 +88,6 @@ go build -o vecai ./cmd/vecai
 task build
 ```
 
-### Prerequisites
-
-- [Ollama](https://ollama.ai) - Local LLM server (required)
-- [vecgrep](https://github.com/abdul-hamid-achik/vecgrep) - Semantic code search (optional)
-- [gpeek](https://github.com/abdul-hamid-achik/gpeek) - Git visualization (optional)
-- [noted](https://github.com/abdul-hamid-achik/noted) - Persistent memory (optional)
-
 ### Verify Installation
 
 ```bash
@@ -105,9 +116,25 @@ vecai --quick "explain REST vs GraphQL"
 ```
 
 Quick mode:
-- Uses the fast model tier (llama3.2:3b)
+- Uses the fast model tier (qwen2.5-coder:3b)
 - No tools, no history, minimal prompt
 - Ideal for quick factual questions
+
+### Headless / Pipe Mode
+
+Run queries without the TUI, ideal for scripting and CI:
+
+```bash
+# Prompt flag
+vecai -p "list all exported functions"
+
+# JSON output
+vecai -p "summarize this file" --json
+
+# Pipe stdin
+cat main.go | vecai -p "review this code"
+echo "explain goroutines" | vecai -p ""
+```
 
 ### Capture Mode
 
@@ -133,9 +160,9 @@ Interactive commands:
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/mode fast` | Switch to fast model (llama3.2:3b) |
-| `/mode smart` | Switch to smart model (qwen3:8b) |
-| `/mode genius` | Switch to genius model (qwen3:14b) |
+| `/mode fast` | Switch to fast model (qwen2.5-coder:3b) |
+| `/mode smart` | Switch to smart model (qwen2.5-coder:7b) |
+| `/mode genius` | Switch to genius model (qwen2.5-coder:14b) |
 | `/plan <goal>` | Enter plan mode |
 | `/skills` | List available skills |
 | `/status` | Check vecgrep index status |
@@ -213,10 +240,10 @@ provider: ollama
 # Ollama settings
 ollama:
   base_url: "http://localhost:11434"
-  model_fast: "llama3.2:3b"
-  model_smart: "qwen3:8b"
-  model_genius: "qwen3:14b"
-  keep_alive: "30m"
+  model_fast: "qwen2.5-coder:3b"
+  model_smart: "qwen2.5-coder:7b"
+  model_genius: "qwen2.5-coder:14b"
+  keep_alive: "10m"
 
 # Default model tier: fast, smart, or genius
 default_tier: fast
@@ -239,7 +266,7 @@ context:
   warn_threshold: 0.50            # Warn at 50% context usage
   preserve_last: 2                # Keep last 2 messages when compacting
   enable_auto_compact: true
-  context_window: 8192            # Token limit for model (optimized for speed)
+  context_window: 32768           # Token limit (capped per-model via ModelContextWindows)
 
 # Token-efficient analysis mode
 analysis:
@@ -253,6 +280,8 @@ memory:
   enabled: true
   project_dir: ".vecai/memory"
   global_dir: "~/.config/vecai/memory"
+  store_max_entries: 10000
+  store_max_disk_mb: 10
 
 # Tool configuration
 tools:
@@ -266,6 +295,9 @@ tools:
     max_context_notes: 5
   gpeek:
     enabled: true
+  sandbox:
+    enabled: true
+    allow_net: false
 ```
 
 ### Environment Variables
@@ -283,9 +315,11 @@ tools:
 
 | Flag | Description |
 |------|-------------|
+| `-p, --prompt <text>` | Headless mode: run prompt without TUI (pipe-friendly) |
+| `--json` | Output JSON instead of plain text (use with -p) |
 | `-q, --quick` | Quick mode: fast response, no tools |
 | `-c, --capture` | Capture mode: prompt to save responses to notes |
-| `--model <name>` | Override model (e.g., "qwen3:8b", "qwen3:14b") |
+| `--model <name>` | Override model (e.g., "qwen2.5-coder:7b") |
 | `--ollama-url <url>` | Override Ollama URL (default: http://localhost:11434) |
 | `--auto` | Auto-approve all tool executions |
 | `--strict` | Prompt for all tool executions (including reads) |
@@ -325,16 +359,16 @@ vecai can use these tools to interact with your codebase:
 | `grep` | Read | Pattern search (ripgrep) |
 | `write_file` | Write | Create or overwrite files |
 | `edit_file` | Write | Make targeted edits |
-| `bash` | Execute | Run shell commands |
+| `bash` | Execute | Run shell commands (sandboxed) |
 
 ### Go-Specific Tools
 
 | Tool | Permission | Description |
 |------|------------|-------------|
-| `ast` | Read | Parse and analyze Go AST |
-| `lsp` | Read | Go language server queries |
+| `ast_parse` | Read | Parse and analyze Go AST |
+| `lsp_query` | Read | Go language server queries |
 | `linter` | Read | Run golangci-lint |
-| `test` | Execute | Run Go tests |
+| `test_runner` | Execute | Run Go tests |
 
 ### Semantic Search (vecgrep)
 
@@ -390,12 +424,34 @@ Memory tools are available when [noted](https://github.com/abdul-hamid-achik/not
 
 ## Skills
 
-Skills are reusable prompts for common tasks. They trigger automatically based on keywords.
+Skills are reusable prompts for common tasks. They trigger automatically based on keywords or regex patterns in your query.
+
+### Skill Priority
+
+Skills are matched against the user's query in this order:
+1. **Regex triggers** (wrapped in `/`) are matched first using `regexp.MatchString`
+2. **Plain text triggers** are matched via case-insensitive substring search
+
+The first matching skill wins. If multiple skills could match, the one loaded first takes priority. Skills are loaded from directories in this order:
+
+1. `./skills/` (project-local)
+2. `./.vecai/skills/` (project config)
+3. `~/.config/vecai/skills/` (user global)
+
+Project-local skills override global skills with the same name.
 
 ### Built-in Skills
 
-- **code-review** - Thorough code review with security and quality checks
-- **technical-spec** - Create technical specification documents
+| Skill | Triggers | Description |
+|-------|----------|-------------|
+| `code-review` | "review" | Thorough code review with security and quality checks |
+| `technical-spec` | "spec", "specification" | Create technical specification documents |
+| `debug` | "debug", code+error patterns | Systematic debugging workflow |
+| `explain` | code+explain patterns | Code explanation at multiple detail levels |
+| `document` | code+document patterns | Generate documentation for code |
+| `refactor` | "refactor" | Code refactoring guidance |
+| `test` | "test" | Test writing assistance |
+| `security` | "security" | Security review and hardening |
 
 ### Creating Custom Skills
 
@@ -418,31 +474,24 @@ Your custom prompt here...
 ```
 
 Triggers can be:
-- Plain text (case-insensitive match)
+- Plain text (case-insensitive substring match)
 - Regex patterns (wrapped in `/`)
-
-### Skill Locations
-
-Skills are loaded from:
-1. `./skills/`
-2. `./.vecai/skills/`
-3. `~/.config/vecai/skills/`
 
 ## Model Tiers
 
 | Tier | Default Model | Best For |
 |------|---------------|----------|
-| `fast` | llama3.2:3b | Quick questions, simple lookups |
-| `smart` | qwen3:8b | Most tasks, good balance |
-| `genius` | qwen3:14b | Complex reasoning, architecture |
+| `fast` | qwen2.5-coder:3b | Quick questions, simple lookups |
+| `smart` | qwen2.5-coder:7b | Most tasks, good balance |
+| `genius` | qwen2.5-coder:14b | Complex reasoning, architecture |
 
 ### Smart Tier Selection
 
 vecai automatically selects the optimal model based on query complexity:
 
-- **Simple queries** ("where is...", "find...", "list...") → fast tier
-- **Complex queries** ("analyze...", "review...", "refactor...") → genius tier
-- **Default** → smart tier
+- **Simple queries** ("where is...", "find...", "list...") -> fast tier
+- **Complex queries** ("analyze...", "review...", "refactor...") -> genius tier
+- **Default** -> smart tier
 
 This happens automatically. Override with `--model` if needed.
 
@@ -470,7 +519,7 @@ In interactive mode:
 
 Or override via CLI:
 ```bash
-vecai --model qwen3:14b "explain the architecture"
+vecai --model qwen2.5-coder:14b "explain the architecture"
 ```
 
 ## Semantic Search Setup
@@ -588,6 +637,8 @@ memory:
   enabled: true                    # Enable/disable memory layer
   project_dir: ".vecai/memory"     # Per-project memory location
   global_dir: "~/.config/vecai/memory"  # Global memory location
+  store_max_entries: 10000         # Max entries per store (0 = unlimited)
+  store_max_disk_mb: 10            # Max disk per store in MB (0 = unlimited)
 ```
 
 ### Memory Storage
@@ -613,6 +664,10 @@ tools:
 
   gpeek:
     enabled: true           # Enable git visualization tools
+
+  sandbox:
+    enabled: true           # OS-level sandbox for bash commands
+    allow_net: false         # Allow network access in sandbox
 ```
 
 ### Disabling Tool Groups
@@ -731,7 +786,7 @@ Or switch to a faster model:
 
 Or use a smaller Ollama model:
 ```bash
-vecai --model llama3.2:1b "quick question"
+vecai --model qwen2.5-coder:3b "quick question"
 ```
 
 ### High Memory Usage
@@ -800,6 +855,10 @@ VECAI_LOG_LEVEL=debug vecai "your query"
 task build      # Build binary
 task test       # Run tests
 task lint       # Run linter
+task fmt        # Format code
+task vet        # Run go vet
+task coverage   # Run tests with coverage
+task all        # Run fmt, vet, lint, test, build
 task clean      # Remove build artifacts
 ```
 
@@ -812,7 +871,8 @@ vecai/
 │   ├── agent/          # Core agent logic and planning
 │   ├── config/         # Configuration management
 │   ├── context/        # Context and token management
-│   ├── llm/            # Ollama client
+│   ├── errors/         # Structured error types
+│   ├── llm/            # Ollama client with resilience
 │   ├── logging/        # Unified logging system (console, file, JSONL tracing)
 │   ├── memory/         # Persistent memory layer
 │   ├── permissions/    # Permission system

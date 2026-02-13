@@ -30,13 +30,15 @@ type PipelineConfig struct {
 	Permissions *permissions.Policy
 }
 
-// NewPipeline creates a new multi-agent pipeline
+// NewPipeline creates a new multi-agent pipeline.
+// Each sub-agent gets its own forked LLM client so tier/model changes
+// in one agent do not affect the others.
 func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{
-		router:   NewTaskRouter(cfg.Client, cfg.Config),
-		planner:  NewPlannerAgent(cfg.Client, cfg.Config, cfg.Registry),
-		executor: NewExecutorAgent(cfg.Client, cfg.Config, cfg.Registry, cfg.Permissions),
-		verifier: NewVerifierAgent(cfg.Client, cfg.Config, cfg.Registry),
+		router:   NewTaskRouter(cfg.Client.Fork(), cfg.Config),
+		planner:  NewPlannerAgent(cfg.Client.Fork(), cfg.Config, cfg.Registry),
+		executor: NewExecutorAgent(cfg.Client.Fork(), cfg.Config, cfg.Registry, cfg.Permissions),
+		verifier: NewVerifierAgent(cfg.Client.Fork(), cfg.Config, cfg.Registry),
 		config:   cfg.Config,
 	}
 }
@@ -144,7 +146,7 @@ func (p *Pipeline) executeMultiAgentFlow(ctx context.Context, task string, resul
 			return result, nil
 		}
 		response = strings.ToLower(strings.TrimSpace(response))
-		if response != "y" && response != "yes" {
+		if response != "y" && response != "yes" && response != "a" {
 			output.Info("Plan execution cancelled")
 			return result, nil
 		}

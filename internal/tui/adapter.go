@@ -227,7 +227,7 @@ func (a *TUIAdapter) Confirm(prompt string, defaultYes bool) (bool, error) {
 
 // Select presents options (not fully supported in TUI mode)
 func (a *TUIAdapter) Select(prompt string, options []string) (int, error) {
-	return 0, nil
+	return 0, fmt.Errorf("Select() is not supported in TUI mode")
 }
 
 // Clear clears the conversation
@@ -306,7 +306,7 @@ func (a *TUIAdapter) WaitForRateLimit(ctx context.Context, duration time.Duratio
 
 	// Wait with countdown updates
 	endTime := time.Now().Add(duration)
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {

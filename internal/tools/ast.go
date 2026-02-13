@@ -110,6 +110,11 @@ func (t *ASTTool) Execute(ctx context.Context, input map[string]any) (string, er
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
+	// Validate path is within project directory
+	if err := ValidatePath(absPath); err != nil {
+		return "", err
+	}
+
 	// Check if it's a Go file
 	if !strings.HasSuffix(absPath, ".go") {
 		return "", fmt.Errorf("ast_parse only works with Go files (*.go)")

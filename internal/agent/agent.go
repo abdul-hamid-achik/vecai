@@ -244,7 +244,7 @@ func New(cfg Config) *Agent {
 		input:               cfg.Input,
 		config:              cfg.Config,
 		contextMgr:          ctxmgr.NewContextManager(prompt, ctxConfig),
-		compactor:           ctxmgr.NewCompactor(cfg.LLM),
+		compactor:           ctxmgr.NewCompactor(cfg.LLM.Fork()),
 		resultCache:         resultCache,
 		sessionMgr:          sessionMgr,
 		memoryLayer:         memLayer,
@@ -270,7 +270,7 @@ func New(cfg Config) *Agent {
 		Registry:    cfg.Tools,
 		Permissions: cfg.Permissions,
 	})
-	a.router = NewTaskRouter(cfg.LLM, cfg.Config)
+	a.router = NewTaskRouter(cfg.LLM.Fork(), cfg.Config)
 	a.syncContextWindow()
 
 	// Wire up auto-save callback
@@ -1038,16 +1038,11 @@ func (a *Agent) applyModeChange(mode tui.AgentMode, updateTier bool) {
 		}
 	}
 
-	// Mode-based tier switching
+	// Mode-based tier switching: delegate to selectTierForMode so that the
+	// tier selector and mode floor logic stay in one place.
 	if updateTier && a.autoTier && !a.quickMode {
-		switch mode {
-		case tui.ModeAsk:
-			a.llm.SetTier(config.TierFast)
-		case tui.ModePlan:
-			a.llm.SetTier(config.TierSmart)
-		case tui.ModeBuild:
-			a.llm.SetTier(config.TierSmart)
-		}
+		tier := a.selectTierForMode(a.currentQuery)
+		a.llm.SetTier(tier)
 		a.syncContextWindow()
 	}
 }

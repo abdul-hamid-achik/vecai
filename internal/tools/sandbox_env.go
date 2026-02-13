@@ -10,6 +10,22 @@ var allowedEnvVars = []string{
 	"GOPATH",
 	"GOROOT",
 	"TMPDIR",
+	"USER",
+	"LOGNAME",
+	"LANG",
+	"LC_ALL",
+	"SHELL",
+	"GOFLAGS",
+	"GOPROXY",
+	"GOMODCACHE",
+	"CGO_ENABLED",
+	"SSH_AUTH_SOCK",
+	"GIT_AUTHOR_NAME",
+	"GIT_AUTHOR_EMAIL",
+	"GIT_COMMITTER_NAME",
+	"GIT_COMMITTER_EMAIL",
+	"EDITOR",
+	"VISUAL",
 }
 
 // SanitizedEnv returns an environment slice containing only allowlisted variables.

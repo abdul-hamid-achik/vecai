@@ -52,11 +52,18 @@ func (a *Agent) autoRAGSearch(ctx context.Context, query string) string {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		logDebug("auto-RAG: vecgrep search failed: %v", err)
 		return ""
 	}
 
 	contextWindow := a.config.GetContextWindowForModel(a.llm.GetModel())
-	return formatRAGResults(stdout.Bytes(), contextWindow)
+	result := formatRAGResults(stdout.Bytes(), contextWindow)
+	if result != "" {
+		logDebug("auto-RAG: injected %d chars of code context", len(result))
+	} else {
+		logDebug("auto-RAG: no relevant results found")
+	}
+	return result
 }
 
 // ragResult represents a single vecgrep search result

@@ -26,7 +26,7 @@ vecai implements a **ReAct (Reasoning + Acting)** agent pattern where the AI:
 │                       Agent Loop                            │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
 │  │  LLM Call   │───▶│ Tool Calls? │───▶│  Execute    │     │
-│  │  (Claude)   │    │             │    │   Tools     │     │
+│  │  (Ollama)   │    │             │    │   Tools     │     │
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 │         ▲                  │                   │            │
 │         │                  │ No                │            │
@@ -46,29 +46,29 @@ The `Agent` struct is the central coordinator:
 
 ```go
 type Agent struct {
-    llm         *llm.Client           // Anthropic SDK wrapper
+    llm         llm.LLMClient        // Ollama LLM client
     tools       *tools.Registry       // Available tools
     permissions *permissions.Policy   // Permission checking
     skills      *skills.Loader        // Skill prompts
     output      *ui.OutputHandler     // Console output
     input       *ui.InputHandler      // User input
     config      *config.Config        // Configuration
-    messages    []llm.Message         // Conversation history
+    contextMgr  *context.ContextManager // Context window management
     planner     *Planner              // Plan mode handler
 }
 ```
 
 ### Agent Loop
 
-The agent loop (`runLoop`) executes up to 20 iterations:
+The agent loop (`runAgentLoop`) executes up to configurable max iterations (default 20):
 
 ```go
 for i := 0; i < maxIterations; i++ {
     // 1. Get tool definitions for LLM
     toolDefs := a.getToolDefinitions()
 
-    // 2. Stream response from Claude
-    stream := a.llm.ChatStream(ctx, a.messages, toolDefs, systemPrompt)
+    // 2. Stream response from Ollama
+    stream := a.llm.ChatStream(ctx, messages, toolDefs, systemPrompt)
 
     // 3. Process stream chunks (text, thinking, tool_calls)
     for chunk := range stream {
@@ -121,16 +121,60 @@ const (
 
 ### Available Tools
 
+#### Core File Tools
 | Tool | Permission | Description |
 |------|------------|-------------|
-| `vecgrep_search` | Read | Semantic code search via embeddings |
+| `read_file` | Read | Read file contents with line ranges |
+| `write_file` | Write | Create or overwrite files |
+| `edit_file` | Write | Make targeted find/replace edits |
+| `list_files` | Read | List directory contents recursively |
+| `grep` | Read | Regex pattern search (ripgrep-based) |
+| `bash` | Execute | Run shell commands (sandboxed) |
+
+#### Go Development Tools
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `ast_parse` | Read | Parse and analyze Go AST structures |
+| `lsp_query` | Read | Go language server queries (definitions, references) |
+| `linter` | Read | Run golangci-lint on files |
+| `test_runner` | Execute | Run Go tests with filtering |
+
+#### Semantic Search (vecgrep)
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `vecgrep_search` | Read | Semantic, keyword, or hybrid code search |
+| `vecgrep_similar` | Read | Find similar code by snippet, location, or chunk ID |
 | `vecgrep_status` | Read | Check search index status |
-| `read_file` | Read | Read file contents |
-| `list_files` | Read | List directory contents |
-| `grep` | Read | Pattern search (ripgrep) |
-| `write_file` | Write | Create/overwrite files |
-| `edit_file` | Write | Make targeted edits (find/replace) |
-| `bash` | Execute | Run shell commands |
+| `vecgrep_index` | Write | Index or re-index files |
+| `vecgrep_clean` | Write | Remove orphaned data and optimize DB |
+| `vecgrep_delete` | Write | Delete a file from the search index |
+| `vecgrep_init` | Write | Initialize vecgrep in current project |
+
+#### Git Visualization (gpeek)
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `gpeek_status` | Read | Repository status overview |
+| `gpeek_diff` | Read | Structured diffs with hunks |
+| `gpeek_log` | Read | Commit history with filters |
+| `gpeek_summary` | Read | Complete repo snapshot |
+| `gpeek_blame` | Read | Line-by-line attribution |
+| `gpeek_branches` | Read | List branches |
+| `gpeek_stashes` | Read | List stashes |
+| `gpeek_tags` | Read | List tags |
+| `gpeek_changes_between` | Read | Changes between refs |
+| `gpeek_conflict_check` | Read | Predict merge conflicts |
+
+#### Web Search
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `web_search` | Read | Search the web (requires TAVILY_API_KEY) |
+
+#### Memory (noted)
+| Tool | Permission | Description |
+|------|------------|-------------|
+| `noted_remember` | Write | Store memories with tags and importance |
+| `noted_recall` | Read | Search memories semantically |
+| `noted_forget` | Write | Delete memories by ID, tags, or age |
 
 ### Tool Execution Flow
 
@@ -171,9 +215,10 @@ const (
 
 ```go
 const (
-    ModeAsk    = 0  // Default: prompt for write/execute, auto-approve reads
-    ModeAuto   = 1  // Approve everything (--auto flag)
-    ModeStrict = 2  // Prompt for everything including reads
+    ModeAsk      = 0  // Default: prompt for write/execute, auto-approve reads
+    ModeAuto     = 1  // Approve everything (--auto flag)
+    ModeStrict   = 2  // Prompt for everything including reads
+    ModeAnalysis = 3  // Read-only, block all writes/executes
 )
 ```
 
@@ -335,25 +380,30 @@ The planner generates structured output:
 
 ## LLM Integration
 
-### Client (`internal/llm/client.go`)
+### Client (`internal/llm/`)
 
-Wraps the Anthropic SDK:
+Wraps the Ollama API with streaming support and resilience:
 
 ```go
-type Client struct {
-    client *anthropic.Client
-    config *config.Config
-    model  string
+type LLMClient interface {
+    Chat(ctx context.Context, messages []Message, tools []ToolDefinition, system string) (*Response, error)
+    ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, system string) <-chan StreamChunk
+    SetModel(model string)
+    SetTier(tier config.ModelTier)
+    GetModel() string
+    Close() error
 }
 ```
+
+The `ResilientClient` wraps any `LLMClient` with retry logic and a circuit breaker for fault tolerance.
 
 ### Model Tiers
 
 ```go
 const (
-    TierFast   = "fast"   // llama3.2:3b - quick responses
-    TierSmart  = "smart"  // qwen3:8b - balanced
-    TierGenius = "genius" // qwen3:14b - most capable
+    TierFast   = "fast"   // qwen2.5-coder:3b - quick responses
+    TierSmart  = "smart"  // qwen2.5-coder:7b - balanced
+    TierGenius = "genius" // qwen2.5-coder:14b - most capable
 )
 ```
 
@@ -369,6 +419,18 @@ type StreamChunk struct {
     Error     error
 }
 ```
+
+## Agent Modes
+
+vecai supports three agent modes that control tool access and behavior:
+
+| Mode | Tools | Tier | Use Case |
+|------|-------|------|----------|
+| **Ask** | Read-only | Fast | Explore and understand code |
+| **Plan** | Read + confirm writes | Smart | Analyze and plan changes |
+| **Build** | All tools | Smart+ | Implement changes |
+
+Modes can be switched via Shift+Tab in the TUI or auto-selected based on query intent.
 
 ## Message Flow
 
@@ -390,45 +452,14 @@ type Message struct {
 5. Loop until no more tool calls
 6. Final text response displayed to user
 
-```
-User: "What does the main function do?"
-     │
-     ▼
-[User Message: "What does the main function do?"]
-     │
-     ▼
-[LLM Response: Tool Call - read_file("cmd/vecai/main.go")]
-     │
-     ▼
-[Execute Tool - read main.go]
-     │
-     ▼
-[User Message: "Tool read_file result: <file contents>"]
-     │
-     ▼
-[LLM Response: "The main function initializes the configuration..."]
-     │
-     ▼
-Display to user
-```
-
 ## System Prompt
 
 The agent operates with a system prompt that defines:
 
 - Available tools and their purposes
-- Guidelines for tool selection
+- Guidelines for tool selection (vecgrep_search first)
 - Response formatting expectations
-
-```go
-const systemPrompt = `You are vecai, an AI-powered codebase assistant...
-
-Guidelines:
-1. Use vecgrep_search for understanding concepts
-2. Use grep for exact pattern matching
-3. Always read files before modifying them
-...`
-```
+- Mode-specific instructions (Ask/Plan/Build)
 
 ## Extension Points
 
@@ -438,7 +469,7 @@ Guidelines:
 2. Register in `NewRegistry()`:
 
 ```go
-func NewRegistry() *Registry {
+func NewRegistry(cfg *config.ToolsConfig) *Registry {
     r := &Registry{tools: make(map[string]Tool)}
     r.Register(&MyNewTool{})
     return r
@@ -459,21 +490,25 @@ Implement `InputHandler` and `OutputHandler` interfaces for custom permission pr
 
 - Tool execution errors are returned to the LLM for self-correction
 - Permission denials are communicated back to allow alternative approaches
-- Max iterations (20) prevent infinite loops
+- Max iterations prevent infinite loops (configurable, default: 20)
 - Stream errors are surfaced to the user
+- Structured errors (`internal/errors/`) with Category, Code, and Retryable fields
 
 ## Concurrency
 
 - Tool registry uses `sync.RWMutex` for thread-safe access
 - Permission cache uses `sync.RWMutex` for concurrent reads
 - Streaming uses channels for async communication
+- Parallel tool execution (configurable, default: 4 concurrent)
 
 ## Configuration
 
 See `internal/config/config.go` for:
 
-- Model selection
-- Max tokens
-- Temperature
+- Model selection and tiers
+- Max tokens and temperature
+- Context window management
 - Skills directory
-- vecgrep path
+- Tool group enable/disable
+- Memory layer settings
+- Rate limiting and resilience

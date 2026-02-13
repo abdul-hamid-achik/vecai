@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -102,14 +104,19 @@ func (e *ExecutorAgent) ExecuteStep(ctx context.Context, step *PlanStep, previou
 				logWarn("ExecutorAgent: tool %s failed: %v", tc.Name, toolResult.Error)
 			}
 
-			// Add tool result to conversation
+			// Use proper tool protocol: assistant message with ToolCalls, then tool result
+			callID := tc.ID
+			if callID == "" {
+				callID = syntheticToolCallID()
+			}
 			messages = append(messages, llm.Message{
-				Role:    "assistant",
-				Content: fmt.Sprintf("[Called %s]", tc.Name),
+				Role:      "assistant",
+				ToolCalls: []llm.ToolCall{{ID: callID, Name: tc.Name, Input: tc.Input}},
 			})
 			messages = append(messages, llm.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("Tool result for %s:\n%s", tc.Name, toolResult.Output),
+				Role:       "tool",
+				Content:    toolResult.Output,
+				ToolCallID: callID,
 			})
 		}
 	}
@@ -169,13 +176,18 @@ func (e *ExecutorAgent) ExecuteDirectTask(ctx context.Context, task string, inte
 			toolResult := e.executeToolCall(ctx, tc)
 			result.ToolCalls = append(result.ToolCalls, toolResult)
 
+			callID := tc.ID
+			if callID == "" {
+				callID = syntheticToolCallID()
+			}
 			messages = append(messages, llm.Message{
-				Role:    "assistant",
-				Content: fmt.Sprintf("[Called %s]", tc.Name),
+				Role:      "assistant",
+				ToolCalls: []llm.ToolCall{{ID: callID, Name: tc.Name, Input: tc.Input}},
 			})
 			messages = append(messages, llm.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("Tool result for %s:\n%s", tc.Name, toolResult.Output),
+				Role:       "tool",
+				Content:    toolResult.Output,
+				ToolCallID: callID,
 			})
 		}
 	}
@@ -315,6 +327,13 @@ func (e *ExecutorAgent) getAllToolDefs() []llm.ToolDefinition {
 		}
 	}
 	return defs
+}
+
+// syntheticToolCallID generates a unique ID for tool calls when the LLM omits one.
+func syntheticToolCallID() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return "call_" + hex.EncodeToString(b)
 }
 
 func (e *ExecutorAgent) executeToolCall(ctx context.Context, tc llm.ToolCall) ToolCallResult {

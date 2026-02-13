@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -66,7 +67,7 @@ func SearchVecgrep(ctx context.Context, query string, queryContext string, proje
 
 	cmd := exec.CommandContext(ctx, "vecgrep", "search",
 		"--query", searchQuery,
-		"--limit", itoa(limit),
+		"--limit", strconv.Itoa(limit),
 		"--mode", "hybrid",
 		"--format", "json",
 	)

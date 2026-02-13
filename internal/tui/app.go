@@ -48,6 +48,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+		// Refresh markdown renderer if terminal width changed significantly
+		getMarkdownRenderer(m.width)
+
 		// Calculate viewport size (total height minus header and footer)
 		// Header: 1 line, Footer: 2 lines (status bar + input line)
 		headerHeight := 1
@@ -270,7 +273,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.interruptPending = true
 		m.lastInterruptTime = now
-		m.activityMessage = "Stopping... (ESC to force stop)"
+		m.activityMessage = "Finishing current step... press ESC again to force stop"
 		return m, nil
 	}
 
@@ -291,6 +294,13 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			m.permDetailsExpanded = false
 			return m.handlePermissionKey("n")
+		}
+		// Allow viewport scrolling while in permission state
+		switch msg.Type {
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
 		}
 		// Ignore all other keys in permission state
 		return m, nil
@@ -422,7 +432,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle Up/Down for history navigation when textarea is empty or single-line
-	if msg.Type == tea.KeyUp && m.textArea.Value() == "" && !m.engine.IsActive() {
+	if msg.Type == tea.KeyUp && (m.textArea.Value() == "" || m.textArea.LineCount() <= 1) && !m.engine.IsActive() {
 		if len(m.inputHistory) > 0 {
 			if m.historyIdx == -1 {
 				// Entering history mode: save current input
@@ -454,6 +464,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		input := strings.TrimSpace(m.textArea.Value())
 		if input == "" {
+			// Show a hint on first empty Enter if no blocks exist yet
+			if len(*m.blocks) == 0 {
+				m.AddBlock(ContentBlock{Type: BlockInfo, Content: "Type a message or /help for commands"})
+			}
 			return m, nil
 		}
 
@@ -558,15 +572,15 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}))
 	}
 
-	// Proactive file suggestions: when user types 15+ chars without @, suggest files
-	if !m.engine.IsActive() && len(fullInput) >= 15 && !strings.Contains(fullInput, "@") && !strings.HasPrefix(fullInput, "/") {
+	// Proactive file suggestions: when user types 10+ chars without @, suggest files
+	if !m.engine.IsActive() && len(fullInput) >= 10 && !strings.Contains(fullInput, "@") && !strings.HasPrefix(fullInput, "/") {
 		*m.suggestDebounceID++
 		debounceID := *m.suggestDebounceID
 		query := strings.TrimSpace(fullInput)
 		extraCmds = append(extraCmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 			return SuggestDebounceMsg{Query: query, DebounceID: debounceID}
 		}))
-	} else if len(fullInput) < 15 || strings.HasPrefix(fullInput, "/") {
+	} else if len(fullInput) < 10 || strings.HasPrefix(fullInput, "/") {
 		// Clear suggestions when input shrinks or is a command
 		m.ClearSuggestions()
 	}
@@ -772,8 +786,8 @@ func (m Model) handleStreamMsg(msg StreamMsg) (tea.Model, tea.Cmd) {
 
 		// Truncate long results (UTF-8 safe)
 		result := msg.Text
-		if len(result) > 500 {
-			result = truncateUTF8Safe(result, 500)
+		if len(result) > 2000 {
+			result = truncateUTF8Safe(result, 2000)
 		}
 		m.AddBlock(ContentBlock{
 			Type:     BlockToolResult,

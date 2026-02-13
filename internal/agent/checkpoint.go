@@ -8,11 +8,17 @@ import (
 
 const maxCheckpoints = 10
 
+// fileState stores the original content and permissions of a file.
+type fileState struct {
+	Content []byte      // nil means the file didn't exist
+	Mode    os.FileMode // original file permissions
+}
+
 // checkpoint stores the original state of files before an agent loop iteration.
 type checkpoint struct {
 	Prompt string
-	// Files maps path → original content (nil means the file didn't exist).
-	Files map[string][]byte
+	// Files maps path → original state (nil content means the file didn't exist).
+	Files map[string]fileState
 }
 
 // CheckpointManager tracks file states across agent loop iterations for /rewind.
@@ -34,7 +40,7 @@ func (cm *CheckpointManager) StartCheckpoint(prompt string) {
 	defer cm.mu.Unlock()
 	cm.current = &checkpoint{
 		Prompt: prompt,
-		Files:  make(map[string][]byte),
+		Files:  make(map[string]fileState),
 	}
 }
 
@@ -54,12 +60,17 @@ func (cm *CheckpointManager) SaveFileState(path string) {
 		return
 	}
 
-	content, err := os.ReadFile(path)
-	if err != nil {
-		// File doesn't exist yet — record nil so rewind deletes it
-		cm.current.Files[path] = nil
+	info, statErr := os.Stat(path)
+	content, readErr := os.ReadFile(path)
+	if readErr != nil {
+		// File doesn't exist yet — record nil content so rewind deletes it
+		cm.current.Files[path] = fileState{Content: nil}
 	} else {
-		cm.current.Files[path] = content
+		mode := os.FileMode(0644)
+		if statErr == nil {
+			mode = info.Mode()
+		}
+		cm.current.Files[path] = fileState{Content: content, Mode: mode}
 	}
 }
 
@@ -100,8 +111,8 @@ func (cm *CheckpointManager) Rewind() ([]string, error) {
 	var restored []string
 	var errors []string
 
-	for path, content := range last.Files {
-		if content == nil {
+	for path, state := range last.Files {
+		if state.Content == nil {
 			// File didn't exist before — delete it
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				errors = append(errors, fmt.Sprintf("failed to remove %s: %v", path, err))
@@ -109,8 +120,8 @@ func (cm *CheckpointManager) Rewind() ([]string, error) {
 				restored = append(restored, path+" (deleted)")
 			}
 		} else {
-			// Restore original content
-			if err := os.WriteFile(path, content, 0644); err != nil {
+			// Restore original content with original permissions
+			if err := os.WriteFile(path, state.Content, state.Mode); err != nil {
 				errors = append(errors, fmt.Sprintf("failed to restore %s: %v", path, err))
 			} else {
 				restored = append(restored, path)

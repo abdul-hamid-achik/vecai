@@ -10,7 +10,6 @@ type LinuxSandbox struct{}
 func (s *LinuxSandbox) Wrap(command string, projectDir string) (string, []string, error) {
 	args := []string{
 		"--unshare-pid",
-		"--unshare-net",
 		"--die-with-parent",
 
 		// Bind-mount essential read-only paths

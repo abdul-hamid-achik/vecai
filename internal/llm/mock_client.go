@@ -109,6 +109,15 @@ func (m *MockLLMClient) GetModel() string {
 	return m.model
 }
 
+// Fork returns a new MockLLMClient with the same injectable functions.
+func (m *MockLLMClient) Fork() LLMClient {
+	return &MockLLMClient{
+		ChatFunc:       m.ChatFunc,
+		ChatStreamFunc: m.ChatStreamFunc,
+		model:          m.GetModel(),
+	}
+}
+
 // Close is a no-op for the mock client.
 func (m *MockLLMClient) Close() error {
 	return nil

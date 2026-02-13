@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -547,25 +548,6 @@ func TestShortName(t *testing.T) {
 	}
 }
 
-func TestItoa(t *testing.T) {
-	tests := []struct {
-		n    int
-		want string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{42, "42"},
-		{100, "100"},
-		{-5, "-5"},
-	}
-	for _, tt := range tests {
-		got := itoa(tt.n)
-		if got != tt.want {
-			t.Errorf("itoa(%d) = %q, want %q", tt.n, got, tt.want)
-		}
-	}
-}
-
 func TestCompletionEngineFileProvider(t *testing.T) {
 	// Create temp dir with test files
 	tmpDir := t.TempDir()
@@ -695,9 +677,9 @@ func TestMergeAsyncResultsCap(t *testing.T) {
 	// Start with 10 items
 	for i := 0; i < 10; i++ {
 		engine.items = append(engine.items, CompletionItem{
-			Label:      "file" + itoa(i) + ".go",
-			InsertText: "@file" + itoa(i) + ".go ",
-			FilePath:   "/proj/file" + itoa(i) + ".go",
+			Label:      "file" + strconv.Itoa(i) + ".go",
+			InsertText: "@file" + strconv.Itoa(i) + ".go ",
+			FilePath:   "/proj/file" + strconv.Itoa(i) + ".go",
 			Score:      float64(10-i) / 10.0,
 		})
 	}
@@ -706,9 +688,9 @@ func TestMergeAsyncResultsCap(t *testing.T) {
 	var async []CompletionItem
 	for i := 10; i < 15; i++ {
 		async = append(async, CompletionItem{
-			Label:      "file" + itoa(i) + ".go",
-			InsertText: "@file" + itoa(i) + ".go ",
-			FilePath:   "/proj/file" + itoa(i) + ".go",
+			Label:      "file" + strconv.Itoa(i) + ".go",
+			InsertText: "@file" + strconv.Itoa(i) + ".go ",
+			FilePath:   "/proj/file" + strconv.Itoa(i) + ".go",
 			Score:      0.5,
 		})
 	}

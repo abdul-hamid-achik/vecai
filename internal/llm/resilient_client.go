@@ -130,6 +130,17 @@ func (rc *ResilientClient) GetModel() string {
 	return rc.inner.GetModel()
 }
 
+// Fork returns a new ResilientClient wrapping the inner client's fork, sharing the circuit breaker.
+func (rc *ResilientClient) Fork() LLMClient {
+	return &ResilientClient{
+		inner:      rc.inner.Fork(),
+		cb:         rc.cb,
+		maxRetries: rc.maxRetries,
+		baseDelay:  rc.baseDelay,
+		maxDelay:   rc.maxDelay,
+	}
+}
+
 // Close delegates to the inner client.
 func (rc *ResilientClient) Close() error {
 	return rc.inner.Close()

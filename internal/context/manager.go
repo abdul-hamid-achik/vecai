@@ -1,14 +1,16 @@
 package context
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/abdul-hamid-achik/vecai/internal/llm"
 )
 
 const (
-	// DefaultContextWindow is the default context window size for Claude models (200K tokens)
-	DefaultContextWindow = 200000
+	// DefaultContextWindow is the default context window size in tokens.
+	// Set to 32K to match typical local models; overridden per-model at runtime.
+	DefaultContextWindow = 32768
 )
 
 // ContextConfig holds configuration for context management
@@ -320,6 +322,14 @@ func (cm *ContextManager) calculateTotalTokens() int {
 	total := estimateTokens(cm.systemPrompt)
 	for _, msg := range cm.messages {
 		total += estimateTokens(msg.Content)
+		// Estimate tokens for tool calls (name + serialized arguments)
+		for _, tc := range msg.ToolCalls {
+			total += estimateTokens(tc.Name)
+			for k, v := range tc.Input {
+				total += estimateTokens(k)
+				total += estimateTokens(fmt.Sprintf("%v", v))
+			}
+		}
 		// Add overhead for message structure
 		total += 10
 	}

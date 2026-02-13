@@ -20,6 +20,8 @@ var dangerousPatterns = []string{
 	"reboot",
 	"init 0",
 	"init 6",
+	"find / -delete",
+	"find / -exec rm",
 }
 
 // networkExfilPatterns are blocked when commands appear to exfiltrate data
@@ -41,6 +43,9 @@ var obfuscationPatterns = []*regexp.Regexp{
 	// python/perl/ruby one-liner evasion
 	regexp.MustCompile(`python[23]?\s+-c\s+.*__(import|eval|exec)__`),
 	regexp.MustCompile(`perl\s+-e\s+.*system\s*\(`),
+
+	// curl/wget piped to shell execution
+	regexp.MustCompile(`(curl|wget)\s+.*\|\s*(bash|sh|zsh|exec)`),
 }
 
 // evasionPatterns detect attempts to smuggle dangerous commands through

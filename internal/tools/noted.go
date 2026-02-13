@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // runNoted executes the noted CLI with the given arguments
 func runNoted(ctx context.Context, args ...string) ([]byte, error) {
+	// Apply a 30-second timeout to prevent runaway noted commands
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "noted", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

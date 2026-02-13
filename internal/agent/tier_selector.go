@@ -79,8 +79,8 @@ func (ts *TierSelector) SelectTier(query string, defaultTier config.ModelTier) c
 		}
 	}
 
-	// Default to smart tier for balanced performance
-	return config.TierSmart
+	// Default to the caller-specified default tier
+	return defaultTier
 }
 
 // GetTierReason returns a human-readable reason for the tier selection

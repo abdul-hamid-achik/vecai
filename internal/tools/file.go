@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,8 +102,13 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (strin
 		// Non-Go files: fall through to normal read
 	}
 
-	// Read file
-	content, err := os.ReadFile(absPath)
+	// Read file using openNoFollow to prevent symlink race attacks
+	f, err := openNoFollow(absPath, os.O_RDONLY, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	defer f.Close()
+	content, err := io.ReadAll(f)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
@@ -258,6 +264,20 @@ func (t *WriteFileTool) Execute(ctx context.Context, input map[string]any) (stri
 			if writeErr := os.WriteFile(absPath, []byte(content), 0644); writeErr != nil {
 				return "", fmt.Errorf("failed to write file: %w", writeErr)
 			}
+			// Re-validate after fallback write to catch symlink swaps
+			resolved, evalErr := filepath.EvalSymlinks(absPath)
+			if evalErr != nil {
+				return "", fmt.Errorf("post-write validation failed: %w", evalErr)
+			}
+			root, rootErr := getProjectRoot()
+			if rootErr != nil {
+				return "", fmt.Errorf("post-write validation failed: %w", rootErr)
+			}
+			if !isWithinRoot(resolved, root) {
+				// File was written outside project root via symlink — attempt cleanup
+				_ = os.Remove(absPath)
+				return "", fmt.Errorf("access denied: file was written outside project directory via symlink")
+			}
 			return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path), nil
 		}
 		return "", fmt.Errorf("failed to open file for writing: %w", err)
@@ -362,8 +382,13 @@ func (t *EditFileTool) Execute(ctx context.Context, input map[string]any) (strin
 	oldContent := string(content)
 	newContent := strings.Replace(oldContent, oldText, newText, 1)
 
-	// Write back
-	if err := os.WriteFile(absPath, []byte(newContent), 0644); err != nil {
+	// Write back using openNoFollow to prevent symlink race attacks
+	wf, err := openNoFollow(absPath, os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file for writing: %w", err)
+	}
+	defer wf.Close()
+	if _, err := wf.WriteString(newContent); err != nil {
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -435,7 +460,12 @@ func (t *ListFilesTool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
-	info, err := os.Stat(absPath)
+	// Validate path is within project directory
+	if err := ValidatePath(absPath); err != nil {
+		return "", err
+	}
+
+	info, err := os.Lstat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("path not found: %s", path)
 	}
@@ -471,7 +501,7 @@ func (t *ListFilesTool) Execute(ctx context.Context, input map[string]any) (stri
 
 			prefix := "  "
 			if info.IsDir() {
-				prefix = "📁"
+				prefix = "[DIR]"
 			}
 			files = append(files, fmt.Sprintf("%s %s", prefix, rel))
 			return nil
@@ -493,7 +523,7 @@ func (t *ListFilesTool) Execute(ctx context.Context, input map[string]any) (stri
 
 			prefix := "  "
 			if entry.IsDir() {
-				prefix = "📁"
+				prefix = "[DIR]"
 			}
 			files = append(files, fmt.Sprintf("%s %s", prefix, name))
 		}

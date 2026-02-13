@@ -542,9 +542,6 @@ func TestModelCompleterInitialized(t *testing.T) {
 	streamChan := make(chan StreamMsg, 10)
 	model := NewModel("test", streamChan)
 
-	if model.completer == nil {
-		t.Fatal("Expected completer to be initialized")
-	}
 	if model.engine == nil {
 		t.Fatal("Expected completion engine to be initialized")
 	}

@@ -179,8 +179,9 @@ Respond with ONLY the category name, nothing else.`
 		return IntentSimple
 	}
 
-	// Parse response
-	content := strings.TrimSpace(strings.ToLower(resp.Content))
+	// Strip <think>...</think> tags that some models wrap reasoning in
+	content := stripThinkTags(resp.Content)
+	content = strings.TrimSpace(strings.ToLower(content))
 	switch content {
 	case "plan":
 		return IntentPlan

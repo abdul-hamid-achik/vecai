@@ -44,7 +44,7 @@ func (p *PlannerAgent) CreatePlan(ctx context.Context, goal string, codebaseCont
 
 	// Use fast model for planning (good at structured thinking)
 	originalModel := p.client.GetModel()
-	p.client.SetTier(config.TierFast)
+	p.client.SetTier(config.TierSmart)
 	defer p.client.SetModel(originalModel)
 
 	systemPrompt := p.buildSystemPrompt()
@@ -98,7 +98,7 @@ func (p *PlannerAgent) RefinePlan(ctx context.Context, plan *StructuredPlan, fee
 	logDebug("PlannerAgent: refining plan based on feedback")
 
 	originalModel := p.client.GetModel()
-	p.client.SetTier(config.TierFast)
+	p.client.SetTier(config.TierSmart)
 	defer p.client.SetModel(originalModel)
 
 	systemPrompt := p.buildSystemPrompt()

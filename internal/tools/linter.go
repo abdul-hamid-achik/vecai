@@ -103,6 +103,18 @@ func (t *LinterTool) Execute(ctx context.Context, input map[string]any) (string,
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
+	// Validate path is within project directory
+	if err := ValidatePath(absPath); err != nil {
+		return "", err
+	}
+
+	// If fix mode is enabled, validate for write access
+	if fix {
+		if err := ValidatePathForWrite(absPath); err != nil {
+			return "", err
+		}
+	}
+
 	// Build command
 	args := []string{"run", "--out-format", "json"}
 	if fix {

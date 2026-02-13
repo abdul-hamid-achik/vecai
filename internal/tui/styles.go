@@ -8,6 +8,7 @@ import (
 // https://www.nordtheme.com/docs/colors-and-palettes
 var (
 	// Polar Night - dark backgrounds
+	nord0 = lipgloss.Color("#2e3440") // Darkest background
 	nord1 = lipgloss.Color("#3b4252") // Elevated surfaces
 	nord3 = lipgloss.Color("#4c566a") // Comments/subtle
 
@@ -161,24 +162,20 @@ var (
 	// ═══════════════════════════════════════════════════════════════════════
 	modeActiveAskStyle = lipgloss.NewStyle().
 				Background(nord8).
-				Foreground(lipgloss.Color("#2e3440")).
+				Foreground(nord0).
 				Bold(true).
 				Padding(0, 2)
 
 	modeActivePlanStyle = lipgloss.NewStyle().
 				Background(nord13).
-				Foreground(lipgloss.Color("#2e3440")).
+				Foreground(nord0).
 				Bold(true).
 				Padding(0, 2)
 
 	modeActiveBuildStyle = lipgloss.NewStyle().
 				Background(nord14).
-				Foreground(lipgloss.Color("#2e3440")).
+				Foreground(nord0).
 				Bold(true).
-				Padding(0, 2)
-
-	modeInactiveStyle = lipgloss.NewStyle().
-				Foreground(colorMuted).
 				Padding(0, 2)
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -246,6 +243,59 @@ var (
 
 	progressEmptyStyle = lipgloss.NewStyle().
 				Foreground(colorDim)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// BORDERS
+	// ═══════════════════════════════════════════════════════════════════════
+	toolResultBorderStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// WELCOME SCREEN
+	// ═══════════════════════════════════════════════════════════════════════
+	welcomeBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorDim).
+			Padding(1, 3)
+
+	welcomeTitleStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
+
+	welcomeSubtitleStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	welcomeKeyStyle = lipgloss.NewStyle().
+			Foreground(colorTextBold).
+			Bold(true).
+			Width(14)
+
+	welcomeDescStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	welcomeValueStyle = lipgloss.NewStyle().
+				Foreground(colorAccent2)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// TOOL CATEGORY PILLS (colored background)
+	// ═══════════════════════════════════════════════════════════════════════
+	toolCategoryReadPillStyle = lipgloss.NewStyle().
+					Foreground(nord0).
+					Background(colorAccent2).
+					Bold(true).
+					Padding(0, 1)
+
+	toolCategoryWritePillStyle = lipgloss.NewStyle().
+					Foreground(nord0).
+					Background(colorCaution).
+					Bold(true).
+					Padding(0, 1)
+
+	toolCategoryExecPillStyle = lipgloss.NewStyle().
+					Foreground(nord0).
+					Background(colorError).
+					Bold(true).
+					Padding(0, 1)
 )
 
 // Icons - minimal, consistent set

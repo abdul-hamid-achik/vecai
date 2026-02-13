@@ -18,13 +18,14 @@ const (
 type CircuitBreaker struct {
 	mu sync.Mutex
 
-	state        CircuitState
-	failures     int
-	successes    int // Consecutive successes in half-open state
-	lastFailure  time.Time
-	maxFailures  int
-	timeout      time.Duration
-	halfOpenMax  int // Successes needed to close from half-open
+	state            CircuitState
+	failures         int
+	successes        int // Consecutive successes in half-open state
+	lastFailure      time.Time
+	maxFailures      int
+	timeout          time.Duration
+	halfOpenMax      int // Successes needed to close from half-open
+	halfOpenInFlight int // Number of concurrent requests allowed in half-open
 }
 
 // NewCircuitBreaker creates a circuit breaker with the given thresholds.
@@ -59,6 +60,11 @@ func (cb *CircuitBreaker) Allow() bool {
 		}
 		return false
 	case CircuitHalfOpen:
+		// Allow only 1 concurrent request in half-open state
+		if cb.halfOpenInFlight >= 1 {
+			return false
+		}
+		cb.halfOpenInFlight++
 		return true
 	}
 	return false
@@ -71,6 +77,9 @@ func (cb *CircuitBreaker) RecordSuccess() {
 
 	switch cb.state {
 	case CircuitHalfOpen:
+		if cb.halfOpenInFlight > 0 {
+			cb.halfOpenInFlight--
+		}
 		cb.successes++
 		if cb.successes >= cb.halfOpenMax {
 			cb.state = CircuitClosed
@@ -96,6 +105,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 			cb.state = CircuitOpen
 		}
 	case CircuitHalfOpen:
+		if cb.halfOpenInFlight > 0 {
+			cb.halfOpenInFlight--
+		}
 		cb.state = CircuitOpen
 		cb.successes = 0
 	}

@@ -89,10 +89,10 @@ func TestSelectTier_SimpleTriggers(t *testing.T) {
 	}
 }
 
-func TestSelectTier_DefaultsToSmart(t *testing.T) {
+func TestSelectTier_DefaultsToProvidedTier(t *testing.T) {
 	ts := NewTierSelector()
 
-	// A query with no recognized triggers should return TierSmart
+	// A query with no recognized triggers should return the provided defaultTier
 	queries := []string{
 		"hello world",
 		"thanks",
@@ -101,9 +101,17 @@ func TestSelectTier_DefaultsToSmart(t *testing.T) {
 	}
 
 	for _, q := range queries {
-		got := ts.SelectTier(q, config.TierFast)
+		got := ts.SelectTier(q, config.TierSmart)
 		if got != config.TierSmart {
 			t.Errorf("SelectTier(%q) = %q, want %q (default)", q, got, config.TierSmart)
+		}
+	}
+
+	// With a different default tier
+	for _, q := range queries {
+		got := ts.SelectTier(q, config.TierFast)
+		if got != config.TierFast {
+			t.Errorf("SelectTier(%q) = %q, want %q (default)", q, got, config.TierFast)
 		}
 	}
 }
@@ -170,13 +178,12 @@ func TestGetTierReason_DefaultQuery(t *testing.T) {
 	}
 }
 
-func TestSelectTier_DefaultTierNotUsed(t *testing.T) {
+func TestSelectTier_DefaultTierIsUsed(t *testing.T) {
 	ts := NewTierSelector()
 
-	// The defaultTier parameter is accepted but not used in the current implementation.
-	// When no triggers match, TierSmart is always returned regardless of defaultTier.
+	// When no triggers match, the provided defaultTier is returned.
 	got := ts.SelectTier("hello", config.TierGenius)
-	if got != config.TierSmart {
-		t.Errorf("SelectTier with no triggers = %q, want %q", got, config.TierSmart)
+	if got != config.TierGenius {
+		t.Errorf("SelectTier with no triggers = %q, want %q", got, config.TierGenius)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -119,7 +120,7 @@ func (t *BashTool) Execute(ctx context.Context, input map[string]any) (string, e
 		if result.Len() > 0 {
 			result.WriteString("\n")
 		}
-		result.WriteString(fmt.Sprintf("Exit code: %v", err))
+		fmt.Fprintf(&result, "Exit code: %v", err)
 	}
 
 	output := result.String()
@@ -194,6 +195,15 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (string, e
 		path = p
 	}
 
+	// Validate path is within project directory
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid path: %w", err)
+	}
+	if err := ValidatePath(absPath); err != nil {
+		return "", err
+	}
+
 	args := []string{"--color=never", "-n"} // No color, show line numbers
 
 	// Case sensitivity
@@ -218,7 +228,7 @@ func (t *GrepTool) Execute(ctx context.Context, input map[string]any) (string, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	// rg returns exit code 1 for no matches, which is not an error
 	if err != nil {
@@ -272,6 +282,12 @@ func (t *GrepTool) fallbackGrep(ctx context.Context, input map[string]any) (stri
 	output := stdout.String()
 	if output == "" {
 		return "No matches found.", nil
+	}
+
+	// Truncate very long output
+	const maxOutput = 50000
+	if len(output) > maxOutput {
+		output = output[:maxOutput] + "\n... (output truncated)"
 	}
 
 	return output, nil

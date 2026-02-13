@@ -62,8 +62,16 @@ func seatbeltProfile(projectDir string) string {
 (allow file-read* (subpath "/private/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 
-; Allow read access to Go toolchain and home config
-(allow file-read* (subpath (param "HOME")))
+; Allow read access to Go toolchain and specific home config dirs
+(allow file-read* (subpath (string-append (param "HOME") "/go")))
+(allow file-read* (subpath (string-append (param "HOME") "/.cache")))
+(allow file-read* (subpath (string-append (param "HOME") "/.config/go")))
+(allow file-read* (subpath (string-append (param "HOME") "/Library/Caches")))
+
+; Deny access to sensitive credential directories
+(deny file-read* (subpath (string-append (param "HOME") "/.ssh")))
+(deny file-read* (subpath (string-append (param "HOME") "/.aws")))
+(deny file-read* (subpath (string-append (param "HOME") "/.gnupg")))
 `, projectDir, projectDir)
 }
 

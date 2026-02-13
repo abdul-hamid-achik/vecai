@@ -69,7 +69,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/abdul-hamid-achik/vecai"
-    description: "AI-powered codebase assistant with semantic search and Claude intelligence"
+    description: "AI-powered codebase assistant with semantic search and local LLM intelligence"
     license: "MIT"
     skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
     install: |
@@ -87,6 +87,6 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/abdul-hamid-achik/vecai"
-    description: "AI-powered codebase assistant with semantic search and Claude intelligence"
+    description: "AI-powered codebase assistant with semantic search and local LLM intelligence"
     license: "MIT"
     skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"

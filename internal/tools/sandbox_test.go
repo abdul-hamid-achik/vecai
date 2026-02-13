@@ -75,6 +75,12 @@ func TestSanitizedEnv(t *testing.T) {
 	allowed := map[string]bool{
 		"PATH": false, "HOME": false, "TERM": false,
 		"GOPATH": false, "GOROOT": false, "TMPDIR": false,
+		"USER": false, "LOGNAME": false, "LANG": false, "LC_ALL": false,
+		"SHELL": false, "GOFLAGS": false, "GOPROXY": false, "GOMODCACHE": false,
+		"CGO_ENABLED": false, "SSH_AUTH_SOCK": false,
+		"GIT_AUTHOR_NAME": false, "GIT_AUTHOR_EMAIL": false,
+		"GIT_COMMITTER_NAME": false, "GIT_COMMITTER_EMAIL": false,
+		"EDITOR": false, "VISUAL": false,
 	}
 
 	for _, e := range env {

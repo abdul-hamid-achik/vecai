@@ -320,15 +320,19 @@ func TestListFilesTool(t *testing.T) {
 		t.Errorf("expected permission Read, got %v", tool.Permission())
 	}
 
-	// Create temp directory with files
+	// Create temp directory with files and set up project root
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	_ = os.WriteFile(filepath.Join(dir, "file1.txt"), []byte(""), 0644)
 	_ = os.WriteFile(filepath.Join(dir, "file2.go"), []byte(""), 0644)
 	_ = os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
 
+	// Resolve dir for path validation (macOS /tmp -> /private/tmp)
+	resolvedDir, _ := filepath.EvalSymlinks(dir)
+
 	// Test listing
 	result, err := tool.Execute(context.Background(), map[string]any{
-		"path": dir,
+		"path": resolvedDir,
 	})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -342,7 +346,7 @@ func TestListFilesTool(t *testing.T) {
 
 	// Test with pattern
 	result, err = tool.Execute(context.Background(), map[string]any{
-		"path":    dir,
+		"path":    resolvedDir,
 		"pattern": "*.go",
 	})
 	if err != nil {
@@ -407,14 +411,18 @@ func TestGrepTool(t *testing.T) {
 		t.Errorf("expected permission Read, got %v", tool.Permission())
 	}
 
-	// Create temp directory with files
+	// Create temp directory with files and set up project root
 	dir := t.TempDir()
+	chdirTemp(t, dir)
 	_ = os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world\nfoo bar\n"), 0644)
+
+	// Resolve dir for path validation (macOS /tmp -> /private/tmp)
+	resolvedDir, _ := filepath.EvalSymlinks(dir)
 
 	// Test grep (this may use rg or grep depending on system)
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"pattern": "hello",
-		"path":    dir,
+		"path":    resolvedDir,
 	})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -426,7 +434,7 @@ func TestGrepTool(t *testing.T) {
 	// Test no matches
 	result, err = tool.Execute(context.Background(), map[string]any{
 		"pattern": "nonexistent_pattern_xyz",
-		"path":    dir,
+		"path":    resolvedDir,
 	})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)

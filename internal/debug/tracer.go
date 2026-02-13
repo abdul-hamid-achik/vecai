@@ -26,10 +26,13 @@ const (
 	EventStepComplete     = "step.complete"
 )
 
-// Default configuration
-const (
-	DefaultDebugDir = "/tmp/vecai-debug"
-)
+// defaultDebugDir returns the default debug directory using os.UserCacheDir.
+func defaultDebugDir() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "vecai", "debug")
+	}
+	return "/tmp/vecai-debug"
+}
 
 // global tracer instance
 var (
@@ -78,7 +81,7 @@ func Init() error {
 	// Get debug directory from env or use default
 	debugDir := os.Getenv("VECAI_DEBUG_DIR")
 	if debugDir == "" {
-		debugDir = DefaultDebugDir
+		debugDir = defaultDebugDir()
 	}
 
 	// Create debug directory if it doesn't exist

@@ -155,7 +155,9 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 		// With args: run plan command
 		goal := strings.Join(parts[1:], " ")
 		if cmdCtx.GetTUIAdapter() != nil {
-			output.Info("Plan mode not fully supported in TUI yet. Use: vecai plan \"" + goal + "\"")
+			output.Warning("Plan with args is not available in TUI mode. Options:")
+			output.Info("  1. Switch to Plan mode: /plan (no args) or Shift+Tab")
+			output.Info("  2. Run from CLI: vecai plan \"" + goal + "\"")
 		} else {
 			if err := a.RunPlan(goal); err != nil {
 				output.Error(err)
@@ -225,31 +227,33 @@ func (ch *CommandHandler) Handle(cmd string, output AgentOutput, cmdCtx CommandC
 	}
 }
 
-// showHelp displays available commands.
+// showHelp displays available commands as a single formatted block.
 func (ch *CommandHandler) showHelp(output AgentOutput) {
-	output.Info("Commands:")
-	output.Info("  /help            Show this help")
-	output.Info("  /ask             Switch to Ask mode (read-only)")
-	output.Info("  /plan            Switch to Plan mode (explore & design)")
-	output.Info("  /plan <goal>     Create a plan for a goal")
-	output.Info("  /build           Switch to Build mode (full execution)")
-	output.Info("  /copy            Copy conversation to clipboard")
-	output.Info("  /mode <tier>     Switch model (fast/smart/genius)")
-	output.Info("  /skills          List available skills")
-	output.Info("  /status          Check vecgrep status")
-	output.Info("  /reindex         Update vecgrep search index")
-	output.Info("  /context         Show context usage breakdown")
-	output.Info("  /compact [focus] Compact conversation (optional focus)")
-	output.Info("  /sessions        List saved sessions")
-	output.Info("  /resume [id]     Resume a session (last if no id)")
-	output.Info("  /new             Start a new session")
-	output.Info("  /delete <id>     Delete a session")
-	output.Info("  /rewind          Undo last agent's file changes")
-	output.Info("  /clear           Clear conversation")
-	output.Info("  /exit            Exit interactive mode")
-	output.Info("")
-	output.Info("Modes: Shift+Tab to cycle | Ask (read-only) → Plan (explore) → Build (execute)")
-	output.Info("Debug: Run with --debug or -d flag")
+	help := `Commands:
+  /help            Show this help
+  /ask             Switch to Ask mode (read-only)
+  /plan            Switch to Plan mode (explore & design)
+  /plan <goal>     Create a plan for a goal
+  /build           Switch to Build mode (full execution)
+  /copy            Copy conversation to clipboard
+  /mode <tier>     Switch model (fast/smart/genius)
+  /skills          List available skills
+  /status          Check vecgrep status
+  /reindex         Update vecgrep search index
+  /context         Show context usage breakdown
+  /compact [focus] Compact conversation (optional focus)
+  /sessions        List saved sessions
+  /resume [id]     Resume a session (last if no id)
+  /new             Start a new session
+  /delete <id>     Delete a session
+  /rewind          Undo last agent's file changes
+  /clear           Clear conversation
+  /exit            Exit interactive mode
+
+Modes: Shift+Tab to cycle | Ask (read-only) > Plan (explore) > Build (execute)
+Keys:  Ctrl+T collapse tools | Ctrl+Y copy response | F1 shortcuts
+Debug: Run with --debug or -d flag`
+	output.Info(help)
 }
 
 // showSkills displays available skills.

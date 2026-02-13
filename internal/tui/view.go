@@ -10,22 +10,51 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Markdown renderer with Nord-compatible dark style
-var mdRenderer *glamour.TermRenderer
+// Markdown renderer with Nord-compatible dark style, lazily created per terminal width.
+var (
+	mdRenderer      *glamour.TermRenderer
+	mdRendererWidth int // The word-wrap width the current renderer was created with
+)
 
 func init() {
-	// Create a Nord-themed renderer
+	// Create initial renderer with a sensible default width
+	mdRenderer = newMarkdownRenderer(100)
+}
+
+// newMarkdownRenderer creates a glamour renderer with the given wrap width.
+func newMarkdownRenderer(width int) *glamour.TermRenderer {
 	nordStyle := getNordGlamourStyle()
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(nordStyle),
-		glamour.WithWordWrap(100),
+		glamour.WithWordWrap(width),
 	)
 	if err != nil {
-		// Fallback: no markdown rendering
-		mdRenderer = nil
-	} else {
-		mdRenderer = r
+		return nil
 	}
+	return r
+}
+
+// getMarkdownRenderer returns a renderer sized for the current terminal width.
+// Recreates the renderer only when the width changes by more than 10 columns.
+func getMarkdownRenderer(termWidth int) *glamour.TermRenderer {
+	wrapWidth := termWidth - 4 // Leave some margin
+	if wrapWidth < 40 {
+		wrapWidth = 40
+	}
+	if mdRenderer == nil || abs(wrapWidth-mdRendererWidth) > 10 {
+		if r := newMarkdownRenderer(wrapWidth); r != nil {
+			mdRenderer = r
+			mdRendererWidth = wrapWidth
+		}
+	}
+	return mdRenderer
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // getNordGlamourStyle returns a glamour style matching the Nord theme
@@ -338,8 +367,7 @@ func (m Model) renderHeader() string {
 	}
 	spaces := strings.Repeat(" ", availWidth)
 
-	header := headerStyle.Width(m.width).Render(leftPart + spaces + rightPart)
-	return header
+	return headerStyle.Width(m.width).Render(leftPart + spaces + rightPart)
 }
 
 // renderFooter renders the footer bar with input or permission prompt
@@ -484,8 +512,16 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, statsHintStyle.Render("Shift+Tab: mode  F1: help"))
 	}
 
-	// Join with simple spacing (cleaner look)
+	// For narrow terminals, drop lower-priority parts from the end
+	// Priority order: activity/rate-limit (first) > tokens > context > iterations > rest
 	content := strings.Join(parts, "   ")
+	if m.width > 0 && lipgloss.Width(content) > m.width-4 {
+		// Drop parts from the end until it fits
+		for len(parts) > 1 && lipgloss.Width(strings.Join(parts, "   ")) > m.width-4 {
+			parts = parts[:len(parts)-1]
+		}
+		content = strings.Join(parts, "   ")
+	}
 
 	return statusBarStyle.Width(m.width).Padding(0, 1).Render(content)
 }
@@ -528,28 +564,22 @@ func formatByteCount(n int) string {
 	return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
 }
 
-// renderModeSelector renders the Claude Code-style mode pills on the input line
+// renderModeSelector renders the active mode as a single pill on the input line
 func (m Model) renderModeSelector() string {
-	modes := []struct {
-		mode        AgentMode
-		label       string
-		activeStyle lipgloss.Style
-	}{
-		{ModeAsk, "Ask", modeActiveAskStyle},
-		{ModePlan, "Plan", modeActivePlanStyle},
-		{ModeBuild, "Build", modeActiveBuildStyle},
+	var style lipgloss.Style
+	var label string
+	switch m.agentMode {
+	case ModeAsk:
+		style = modeActiveAskStyle
+		label = "Ask"
+	case ModePlan:
+		style = modeActivePlanStyle
+		label = "Plan"
+	default:
+		style = modeActiveBuildStyle
+		label = "Build"
 	}
-
-	var parts []string
-	for _, md := range modes {
-		if m.agentMode == md.mode {
-			parts = append(parts, md.activeStyle.Render(md.label))
-		} else {
-			parts = append(parts, modeInactiveStyle.Render(md.label))
-		}
-	}
-
-	return strings.Join(parts, "") + " " + inputPromptStyle.Render("▸")
+	return style.Render(label) + " " + inputPromptStyle.Render("▸")
 }
 
 // renderPermissionFooter renders the enhanced permission prompt panel
@@ -608,11 +638,56 @@ func (m Model) renderPermissionFooter() string {
 // renderStartupView renders the loading/startup view
 func (m Model) renderStartupView() string {
 	frame := GetSpinnerFrame(m.spinnerFrame)
-	return fmt.Sprintf("\n\n  %s Starting vecai...\n\n", frame)
+	modelInfo := ""
+	if m.modelName != "" {
+		modelInfo = fmt.Sprintf(" (%s)", m.modelName)
+	}
+	return fmt.Sprintf("\n\n  %s Starting vecai%s...\n\n", frame, modelInfo)
+}
+
+// renderWelcomeScreen renders a centered welcome box when the conversation is empty
+func (m Model) renderWelcomeScreen() string {
+	var b strings.Builder
+
+	b.WriteString(welcomeTitleStyle.Render("vecai"))
+	b.WriteString("\n")
+	b.WriteString(welcomeSubtitleStyle.Render("AI coding assistant for your"))
+	b.WriteString("\n")
+	b.WriteString(welcomeSubtitleStyle.Render("terminal, powered by local LLMs"))
+	b.WriteString("\n")
+	b.WriteString("\n")
+	b.WriteString(welcomeKeyStyle.Render("Model:") + welcomeValueStyle.Render(m.modelName))
+	b.WriteString("\n")
+
+	modeName := "Build"
+	switch m.agentMode {
+	case ModeAsk:
+		modeName = "Ask"
+	case ModePlan:
+		modeName = "Plan"
+	}
+	b.WriteString(welcomeKeyStyle.Render("Mode:") + welcomeValueStyle.Render(modeName))
+	b.WriteString("\n")
+	b.WriteString("\n")
+	b.WriteString(welcomeKeyStyle.Render("Shift+Tab") + welcomeDescStyle.Render("cycle mode"))
+	b.WriteString("\n")
+	b.WriteString(welcomeKeyStyle.Render("F1") + welcomeDescStyle.Render("keyboard shortcuts"))
+	b.WriteString("\n")
+	b.WriteString(welcomeKeyStyle.Render("/help") + welcomeDescStyle.Render("all commands"))
+	b.WriteString("\n")
+	b.WriteString(welcomeKeyStyle.Render("@file") + welcomeDescStyle.Render("attach context"))
+
+	box := welcomeBoxStyle.Render(b.String())
+	return lipgloss.Place(m.width, m.viewport.Height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // renderContent renders all content blocks
 func (m Model) renderContent() string {
+	// Show welcome screen when conversation is empty
+	if len(*m.blocks) == 0 && m.streaming.Len() == 0 {
+		return m.renderWelcomeScreen()
+	}
+
 	var b strings.Builder
 
 	for i, block := range *m.blocks {
@@ -683,11 +758,11 @@ func (m Model) renderBlock(block ContentBlock) string {
 	}
 }
 
-// renderUserBlock renders a user message
+// renderUserBlock renders a user message with breathing room
 func (m Model) renderUserBlock(block ContentBlock) string {
 	prefix := userPrefixStyle.Render(iconUser + " ")
 	content := userStyle.Render(block.Content)
-	return prefix + content
+	return "\n" + prefix + content
 }
 
 // renderAssistantBlock renders an assistant message with markdown
@@ -715,15 +790,15 @@ func (m Model) renderToolCallBlock(block ContentBlock) string {
 		case ToolCategoryRead:
 			icon = iconToolRead
 			iconSty = toolCategoryReadStyle
-			categoryLabel = toolCategoryReadStyle.Render("[READ]  ")
+			categoryLabel = toolCategoryReadPillStyle.Render("READ") + " "
 		case ToolCategoryWrite:
 			icon = iconToolWrite
 			iconSty = toolCategoryWriteStyle
-			categoryLabel = toolCategoryWriteStyle.Render("[WRITE] ")
+			categoryLabel = toolCategoryWritePillStyle.Render("WRITE") + " "
 		case ToolCategoryExecute:
 			icon = iconToolExec
 			iconSty = toolCategoryExecStyle
-			categoryLabel = toolCategoryExecStyle.Render("[EXEC]  ")
+			categoryLabel = toolCategoryExecPillStyle.Render("EXEC") + " "
 		default:
 			iconSty = toolCallStyle
 		}
@@ -786,19 +861,20 @@ func (m Model) renderToolResultBlock(block ContentBlock) string {
 			} else {
 				rendered = renderMarkdown(block.Content)
 			}
-			// Add 2-space indent to each line for visual grouping
+			// Add left border to each line for visual grouping
+			border := toolResultBorderStyle.Render("│")
 			for i, line := range strings.Split(rendered, "\n") {
 				if i > 0 {
 					b.WriteString("\n")
 				}
-				b.WriteString("  " + line)
+				b.WriteString("  " + border + " " + line)
 			}
 
 			// Show truncation indicator if result was truncated
-			if block.ToolMeta != nil && block.ToolMeta.ResultLen > 500 {
+			if block.ToolMeta != nil && block.ToolMeta.ResultLen > 2000 {
 				b.WriteString("\n")
-				b.WriteString("  " + toolTruncIndicatorStyle.Render(
-					fmt.Sprintf("▸ %s total (showing first 500)", formatByteCount(block.ToolMeta.ResultLen))))
+				b.WriteString("  " + border + " " + toolTruncIndicatorStyle.Render(
+					fmt.Sprintf("▸ %s total (showing first 2000)", formatByteCount(block.ToolMeta.ResultLen))))
 			}
 		}
 	}

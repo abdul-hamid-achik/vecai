@@ -2,6 +2,7 @@ package tui
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -108,7 +109,7 @@ func renderFileTagChips(files []TaggedFile, maxWidth int) string {
 		// Check if we have room
 		if totalWidth+chipWidth > maxWidth && i > 0 {
 			remaining := len(files) - i
-			more := fileTagLabelStyle.Render("+" + strings.Repeat("", 0) + itoa(remaining) + " more")
+			more := fileTagLabelStyle.Render("+" + strconv.Itoa(remaining) + " more")
 			chips = append(chips, more)
 			break
 		}
@@ -127,26 +128,6 @@ func shortName(relPath string) string {
 		base = relPath[idx+1:]
 	}
 	return base
-}
-
-// itoa converts an int to string without importing strconv
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	if n < 0 {
-		return "-" + itoa(-n)
-	}
-	digits := make([]byte, 0, 5)
-	for n > 0 {
-		digits = append(digits, byte('0'+n%10))
-		n /= 10
-	}
-	// Reverse
-	for i, j := 0, len(digits)-1; i < j; i, j = i+1, j-1 {
-		digits[i], digits[j] = digits[j], digits[i]
-	}
-	return string(digits)
 }
 
 // renderSuggestHint renders a compact hint showing proactively suggested files.

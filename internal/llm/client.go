@@ -59,6 +59,7 @@ type LLMClient interface {
 	SetModel(model string)
 	SetTier(tier config.ModelTier)
 	GetModel() string
+	Fork() LLMClient
 	Close() error
 }
 

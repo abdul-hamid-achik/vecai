@@ -40,6 +40,32 @@ tasks:
     cmds:
       - go install ./cmd/vecai
 
+  fmt:
+    desc: Format Go source files
+    cmds:
+      - gofmt -w .
+
+  vet:
+    desc: Run Go vet
+    cmds:
+      - go vet ./...
+
+  coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+      - rm -f coverage.out
+
+  all:
+    desc: Run fmt, vet, lint, test, and build
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+
   deps:
     desc: Download dependencies
     cmds:

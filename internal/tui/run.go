@@ -76,9 +76,6 @@ func Run(cfg RunConfig) error {
 		}
 	})
 
-	// Add initial info block
-	streamChan <- NewInfoMsg("Type /help for commands, /exit to quit")
-
 	// Run program
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("error running TUI: %w", err)
@@ -87,7 +84,9 @@ func Run(cfg RunConfig) error {
 	return nil
 }
 
-// IsTTYAvailable checks if the terminal supports TUI mode
+// IsTTYAvailable checks if the terminal supports TUI mode.
+// Note: NO_COLOR is handled separately via IsNoColor() — it disables colors
+// but should not prevent the TUI from launching.
 func IsTTYAvailable() bool {
 	// Check if stdout is a terminal
 	fileInfo, err := os.Stdout.Stat()
@@ -98,12 +97,13 @@ func IsTTYAvailable() bool {
 		return false
 	}
 
-	// Check NO_COLOR environment variable
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-
 	return true
+}
+
+// IsNoColor returns true if the NO_COLOR environment variable is set,
+// indicating that color output should be suppressed.
+func IsNoColor() bool {
+	return os.Getenv("NO_COLOR") != ""
 }
 
 // TUIRunner provides a way to run the TUI with access to the adapter

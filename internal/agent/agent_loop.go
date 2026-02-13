@@ -84,14 +84,18 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 	}
 
 	consecutiveParseErrors := 0
+	streamDoneSent := false
 
 	for i := 0; i < maxIterations; i++ {
+		streamDoneSent = false // reset per iteration
 		// Check for interrupt/cancellation before starting iteration
 		if hasInterrupt {
 			select {
 			case <-runCtx.Done():
 				output.Warning("Interrupted by user")
-				output.StreamDone()
+				if !streamDoneSent {
+					output.StreamDone()
+				}
 				return nil
 			default:
 			}
@@ -145,7 +149,9 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 							interrupted = true
 							break streamLoopInterruptible
 						}
-						output.StreamDone()
+						if !streamDoneSent {
+							output.StreamDone()
+						}
 						return err
 					}
 				}
@@ -162,7 +168,9 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		// Handle interruption
 		if interrupted {
 			output.Warning("Interrupted by user")
-			output.StreamDone()
+			if !streamDoneSent {
+				output.StreamDone()
+			}
 			return nil
 		}
 
@@ -205,7 +213,9 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		select {
 		case <-forceStop:
 			output.Warning("Force stopped by user")
-			output.StreamDone()
+			if !streamDoneSent {
+				output.StreamDone()
+			}
 			return nil
 		default:
 		}
@@ -227,7 +237,9 @@ func (a *Agent) runAgentLoop(ctx context.Context, output AgentOutput, input Agen
 		}
 		if consecutiveParseErrors >= 3 {
 			output.Warning("Too many consecutive tool call parse errors — stopping")
-			output.StreamDone()
+			if !streamDoneSent {
+				output.StreamDone()
+			}
 			return nil
 		}
 

@@ -294,40 +294,132 @@ func (te *ToolExecutor) executeParallel(ctx context.Context, calls []llm.ToolCal
 
 // formatToolDescription creates a human-readable description of a tool call.
 func formatToolDescription(name string, input map[string]any) string {
+	// Helper to extract a string field with truncation
+	getStr := func(key string, maxLen int) string {
+		if v, ok := input[key].(string); ok {
+			if maxLen > 0 && len(v) > maxLen {
+				return v[:maxLen] + "..."
+			}
+			return v
+		}
+		return ""
+	}
+
 	switch name {
+	// File operations
 	case "read_file":
-		if path, ok := input["path"].(string); ok {
-			return fmt.Sprintf("Read %s", path)
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Read %s", p)
 		}
 	case "write_file":
-		if path, ok := input["path"].(string); ok {
-			return fmt.Sprintf("Write to %s", path)
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Write to %s", p)
 		}
 	case "edit_file":
-		if path, ok := input["path"].(string); ok {
-			return fmt.Sprintf("Edit %s", path)
-		}
-	case "bash":
-		if cmd, ok := input["command"].(string); ok {
-			if len(cmd) > 50 {
-				cmd = cmd[:50] + "..."
-			}
-			return fmt.Sprintf("Run: %s", cmd)
-		}
-	case "vecgrep_search":
-		if query, ok := input["query"].(string); ok {
-			return fmt.Sprintf("Search: %s", query)
-		}
-	case "grep":
-		if pattern, ok := input["pattern"].(string); ok {
-			return fmt.Sprintf("Grep: %s", pattern)
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Edit %s", p)
 		}
 	case "list_files":
 		path := "."
-		if p, ok := input["path"].(string); ok {
+		if p := getStr("path", 0); p != "" {
 			path = p
 		}
 		return fmt.Sprintf("List files in %s", path)
+
+	// Search
+	case "grep":
+		if p := getStr("pattern", 60); p != "" {
+			return fmt.Sprintf("Grep: %s", p)
+		}
+
+	// Execution
+	case "bash":
+		if cmd := getStr("command", 50); cmd != "" {
+			return fmt.Sprintf("Run: %s", cmd)
+		}
+
+	// Analysis tools
+	case "ast_parse":
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Parse AST: %s", p)
+		}
+	case "lsp_query":
+		if q := getStr("query", 50); q != "" {
+			return fmt.Sprintf("LSP: %s", q)
+		}
+	case "lint":
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Lint %s", p)
+		}
+	case "test_run":
+		if p := getStr("path", 0); p != "" {
+			return fmt.Sprintf("Test %s", p)
+		}
+		return "Run tests"
+
+	// Vecgrep tools
+	case "vecgrep_search":
+		if q := getStr("query", 60); q != "" {
+			return fmt.Sprintf("Search: %s", q)
+		}
+	case "vecgrep_similar":
+		if f := getStr("file", 0); f != "" {
+			return fmt.Sprintf("Similar to %s", f)
+		}
+	case "vecgrep_status":
+		return "Check index status"
+	case "vecgrep_overview":
+		return "Codebase overview"
+	case "vecgrep_related_files":
+		if f := getStr("file", 0); f != "" {
+			return fmt.Sprintf("Related to %s", f)
+		}
+	case "vecgrep_index":
+		return "Index codebase"
+	case "vecgrep_init":
+		return "Initialize vecgrep"
+	case "vecgrep_reset":
+		return "Reset index"
+	case "vecgrep_clean":
+		return "Clean index"
+	case "vecgrep_delete":
+		if f := getStr("file_path", 0); f != "" {
+			return fmt.Sprintf("Remove from index: %s", f)
+		}
+	case "vecgrep_batch_search":
+		return "Batch search"
+
+	// Gpeek tools
+	case "gpeek_peek":
+		if s := getStr("symbol", 50); s != "" {
+			return fmt.Sprintf("Peek: %s", s)
+		}
+	case "gpeek_search":
+		if q := getStr("query", 50); q != "" {
+			return fmt.Sprintf("Peek search: %s", q)
+		}
+	case "gpeek_deps":
+		if p := getStr("package", 0); p != "" {
+			return fmt.Sprintf("Deps: %s", p)
+		}
+
+	// Noted tools
+	case "noted_remember":
+		return "Remember note"
+	case "noted_recall":
+		if q := getStr("query", 50); q != "" {
+			return fmt.Sprintf("Recall: %s", q)
+		}
+	case "noted_forget":
+		return "Forget note"
+	case "noted_stats":
+		return "Memory stats"
+
+	// Web
+	case "web_search":
+		if q := getStr("query", 60); q != "" {
+			return fmt.Sprintf("Web: %s", q)
+		}
 	}
 	return ""
 }

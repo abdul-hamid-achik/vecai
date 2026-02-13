@@ -245,8 +245,7 @@ type Model struct {
 	agentMode AgentMode // Current mode: Ask, Plan, Build
 
 	// Autocomplete
-	completer *Completer        // Legacy completer (kept for AddCommands bridge)
-	engine    *CompletionEngine // Unified completion engine (pointer survives model copies)
+	engine *CompletionEngine // Unified completion engine (pointer survives model copies)
 
 	// File tagging (@mentions)
 	taggedFiles *[]TaggedFile // Files tagged with @ (pointer survives model copies)
@@ -308,16 +307,19 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 	ta.CharLimit = 0          // No limit
 	ta.MaxHeight = 5          // Grow up to 5 lines
 	ta.ShowLineNumbers = false // Clean look
-	ta.SetWidth(50)
+	ta.SetWidth(80)
 	ta.SetHeight(1) // Start as single line
 
-	// Apply Nord theme styling to textarea
-	ta.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)                    // Cyan cursor
-	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)    // Readable placeholder
-	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(nord4)               // Primary text
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()                           // No highlight on current line
-	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)   // Readable placeholder
-	ta.BlurredStyle.Text = lipgloss.NewStyle().Foreground(colorMuted)          // Muted when blurred
+	// Apply Nord theme styling to textarea — all backgrounds match footer's colorBgElevate
+	bgStyle := lipgloss.NewStyle().Background(colorBgElevate)
+	ta.Cursor.Style = lipgloss.NewStyle().Foreground(nord8)
+	ta.FocusedStyle.Base = bgStyle
+	ta.FocusedStyle.Placeholder = bgStyle.Foreground(colorMuted)
+	ta.FocusedStyle.Text = bgStyle.Foreground(nord4)
+	ta.FocusedStyle.CursorLine = bgStyle
+	ta.BlurredStyle.Base = bgStyle
+	ta.BlurredStyle.Placeholder = bgStyle.Foreground(colorMuted)
+	ta.BlurredStyle.Text = bgStyle.Foreground(colorMuted)
 
 	blocks := make([]ContentBlock, 0)
 	return Model{
@@ -337,7 +339,6 @@ func NewModel(modelName string, streamChan chan StreamMsg) Model {
 		maxQueueSize:  10,
 		callbacks:     &modelCallbacks{}, // Pointer survives copy to tea.Program
 		agentMode:     ModeBuild,         // Default to full execution mode
-		completer:     NewCompleter(),    // Legacy: kept for AddCommands bridge
 		engine:        NewCompletionEngine(NewSlashCommandProvider(), NewFileMentionProvider("")),
 		taggedFiles:       &[]TaggedFile{},
 		vecgrepDebounceID: new(int),
@@ -575,9 +576,8 @@ func (m *Model) SetModeChangeCallback(fn func(AgentMode)) {
 	m.callbacks.onModeChange = fn
 }
 
-// AddSkillCommands adds skill-based commands to both the legacy completer and the engine's slash provider
+// AddSkillCommands adds skill-based commands to the engine's slash provider
 func (m *Model) AddSkillCommands(cmds []CommandDef) {
-	m.completer.AddCommands(cmds) // Legacy bridge
 	if p, ok := m.engine.providers[TriggerSlash].(*SlashCommandProvider); ok {
 		p.AddCommands(cmds)
 	}

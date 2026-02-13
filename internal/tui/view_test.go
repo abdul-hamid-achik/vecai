@@ -130,43 +130,41 @@ func TestMixedListRendering(t *testing.T) {
 
 // --- Mode Selector Rendering Tests ---
 
-func TestRenderModeSelector_ShowsAllModes(t *testing.T) {
+func TestRenderModeSelector_ShowsActiveMode(t *testing.T) {
 	streamChan := make(chan StreamMsg, 10)
 	model := NewModel("test", streamChan)
 
-	// Default mode is Build
+	// Default mode is Build — should show only Build pill
 	rendered := model.renderModeSelector()
 	plain := stripANSI(rendered)
 
-	if !strings.Contains(plain, "Ask") {
-		t.Errorf("Expected 'Ask' in mode selector, got %q", plain)
-	}
-	if !strings.Contains(plain, "Plan") {
-		t.Errorf("Expected 'Plan' in mode selector, got %q", plain)
-	}
 	if !strings.Contains(plain, "Build") {
 		t.Errorf("Expected 'Build' in mode selector, got %q", plain)
 	}
-	// Should contain the separator
 	if !strings.Contains(plain, "▸") {
 		t.Errorf("Expected '▸' separator in mode selector, got %q", plain)
 	}
 }
 
-func TestRenderModeSelector_HighlightsActiveMode(t *testing.T) {
+func TestRenderModeSelector_ChangesWithMode(t *testing.T) {
 	streamChan := make(chan StreamMsg, 10)
 	model := NewModel("test", streamChan)
 
-	// Test each mode - the rendered output should contain all three labels
-	modes := []AgentMode{ModeAsk, ModePlan, ModeBuild}
-	for _, mode := range modes {
-		model.SetAgentMode(mode)
+	tests := []struct {
+		mode  AgentMode
+		label string
+	}{
+		{ModeAsk, "Ask"},
+		{ModePlan, "Plan"},
+		{ModeBuild, "Build"},
+	}
+	for _, tt := range tests {
+		model.SetAgentMode(tt.mode)
 		rendered := model.renderModeSelector()
 		plain := stripANSI(rendered)
 
-		// All three should be present regardless of active mode
-		if !strings.Contains(plain, "Ask") || !strings.Contains(plain, "Plan") || !strings.Contains(plain, "Build") {
-			t.Errorf("Mode %v: expected all three mode labels in %q", mode, plain)
+		if !strings.Contains(plain, tt.label) {
+			t.Errorf("Mode %v: expected %q in %q", tt.mode, tt.label, plain)
 		}
 	}
 }
@@ -184,9 +182,9 @@ func TestRenderToolCallBlock_CategoryIcons(t *testing.T) {
 		wantIcon string
 		wantLabel string
 	}{
-		{"read tool", "read_file", ToolCategoryRead, iconToolRead, "[READ]"},
-		{"write tool", "write_file", ToolCategoryWrite, iconToolWrite, "[WRITE]"},
-		{"exec tool", "bash", ToolCategoryExecute, iconToolExec, "[EXEC]"},
+		{"read tool", "read_file", ToolCategoryRead, iconToolRead, "READ"},
+		{"write tool", "write_file", ToolCategoryWrite, iconToolWrite, "WRITE"},
+		{"exec tool", "bash", ToolCategoryExecute, iconToolExec, "EXEC"},
 	}
 
 	for _, tt := range tests {
@@ -325,7 +323,7 @@ func TestRenderToolResultBlock_TruncationIndicator(t *testing.T) {
 		ToolMeta: &ToolBlockMeta{
 			ToolType:  ToolCategoryRead,
 			Elapsed:   200 * time.Millisecond,
-			ResultLen: 2450, // Original was > 500
+			ResultLen: 2450, // Original was > 2000
 		},
 	}
 	rendered := model.renderToolResultBlock(block)
@@ -335,8 +333,8 @@ func TestRenderToolResultBlock_TruncationIndicator(t *testing.T) {
 	if !strings.Contains(plain, "2.4 KB") {
 		t.Errorf("Expected truncation indicator with byte count in rendered output %q", plain)
 	}
-	if !strings.Contains(plain, "showing first 500") {
-		t.Errorf("Expected 'showing first 500' in rendered output %q", plain)
+	if !strings.Contains(plain, "showing first 2000") {
+		t.Errorf("Expected 'showing first 2000' in rendered output %q", plain)
 	}
 }
 
