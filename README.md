@@ -63,8 +63,7 @@ vecai
 ### Homebrew (macOS and Linux)
 
 ```bash
-brew tap abdul-hamid-achik/tap
-brew install vecai
+brew install --cask abdul-hamid-achik/tap/vecai
 ```
 
 ### Go Install
