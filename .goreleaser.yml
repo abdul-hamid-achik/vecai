@@ -59,24 +59,6 @@ release:
   prerelease: auto
   name_template: "v{{.Version}}"
 
-brews:
-  - name: vecai
-    ids:
-      - vecai
-    repository:
-      owner: abdul-hamid-achik
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/abdul-hamid-achik/vecai"
-    description: "AI-powered codebase assistant with semantic search and local LLM intelligence"
-    license: "MIT"
-    skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
-    install: |
-      bin.install "vecai"
-    test: |
-      system "#{bin}/vecai", "version"
-
 homebrew_casks:
   - name: vecai
     binaries:
@@ -89,4 +71,15 @@ homebrew_casks:
     homepage: "https://github.com/abdul-hamid-achik/vecai"
     description: "AI-powered codebase assistant with semantic search and local LLM intelligence"
     license: "MIT"
+    # Released binaries are unsigned (not notarized), so strip the Gatekeeper
+    # quarantine attribute on install. GoReleaser <= v2.18 renders this as a
+    # legacy `postflight` block; the tap's normalize-casks workflow rewrites it
+    # to `postflight_steps`. Switch to `install_steps` once GoReleaser v2.19
+    # ships: https://github.com/goreleaser/goreleaser/pull/6873
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vecai"]
+          end
     skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
