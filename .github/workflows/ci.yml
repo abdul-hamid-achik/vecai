@@ -33,6 +33,9 @@ jobs:
           fi
 
       - name: Upload coverage
+        # codecov-action v4 can fail while fetching its uploader (TLS EPROTO) before fail_ci_if_error applies;
+        # coverage upload must never fail the Test job.
+        continue-on-error: true
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
